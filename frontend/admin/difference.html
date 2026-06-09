@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>差异处理 - 管理后台</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🎧 客服管理 - 差异处理</h1>
+      <div class="user-info">
+        <a href="inbound.html" class="btn btn-sm btn-default">退货入库</a>
+        <a href="outbound.html" class="btn btn-sm btn-default">换货出库</a>
+        <a href="difference.html" class="btn btn-sm btn-primary">差异处理</a>
+        <span id="userName">-</span>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2 class="page-title">待差异处理列表</h2>
+    <div class="card">
+      <div id="listContainer">
+        <div style="text-align:center;padding:40px;color:#999;">加载中...</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="diffModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>处理差异</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: 16px;">
+          <span style="color:#666;">售后单号：</span>
+          <span id="modalAfterSaleNo" style="font-weight:500;"></span>
+        </div>
+
+        <div class="section-title">差异明细</div>
+        <div id="diffItems" style="display:flex;flex-direction:column;gap:12px;margin-bottom:20px;"></div>
+
+        <div class="form-group">
+          <label>处理方式 <span style="color:#ff4d4f;">*</span></label>
+          <select id="handleAction">
+            <option value="">请选择处理方式</option>
+            <option value="refund_actual">按实收退款</option>
+            <option value="cancel_difference">取消差异</option>
+          </select>
+        </div>
+
+        <div id="actionHint" class="alert alert-info" style="display:none;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitHandle()">提交处理</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    checkRole([UserRole.CS_AGENT, UserRole.ADMIN], '../login.html');
+
+    const user = getCurrentUser();
+    if (user) {
+      document.getElementById('userName').textContent = user.username + ' (' + roleLabels[user.role] + ')';
+    }
+
+    let currentList = [];
+    let detailMap = {};
+    let currentAfterSaleId = null;
+    let currentDifferenceIds = [];
+
+    async function loadList() {
+      const container = document.getElementById('listContainer');
+      container.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载中...</div>';
+
+      try {
+        const list = await api.getAfterSaleList(AfterSaleStatus.PENDING_DIFFERENCE);
+        currentList = list;
+
+        if (list.length === 0) {
+          container.innerHTML = `
+            <div class="empty">
+              <div class="empty-icon">📋</div>
+              <p>暂无待处理的差异售后单</p>
+            </div>
+          `;
+          return;
+        }
+
+        container.innerHTML = renderTable(list);
+        loadAllDetails(list);
+      } catch (err) {
+        container.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    async function loadAllDetails(list) {
+      for (const item of list) {
+        try {
+          const detail = await api.getAfterSaleDetail(item.id);
+          detailMap[item.id] = detail;
+          updateTableRow(item.id, detail);
+        } catch (err) {
+          console.error('加载详情失败:', err);
+        }
+      }
+    }
+
+    function updateTableRow(id, detail) {
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      if (!row) return;
+
+      const diffRecords = detail.differenceRecords || [];
+      const items = detail.items || [];
+
+      let diffProductNames = [];
+      let totalDiffQty = 0;
+
+      for (const diff of diffRecords) {
+        const item = items.find(i => i.id === diff.after_sale_item_id);
+        if (item) {
+          diffProductNames.push(item.product_name);
+        }
+        totalDiffQty += diff.difference || 0;
+      }
+
+      const productCell = row.querySelector('.diff-product');
+      const qtyCell = row.querySelector('.diff-qty');
+
+      if (productCell) {
+        productCell.textContent = diffProductNames.length > 0 ? diffProductNames.join('、') : '-';
+      }
+      if (qtyCell) {
+        qtyCell.textContent = totalDiffQty > 0 ? totalDiffQty + ' 件' : '-';
+      }
+    }
+
+    function renderTable(list) {
+      const rows = list.map(item => {
+        const statusClass = statusClassMap[item.status] || 'tag-pending';
+        const statusText = statusLabels[item.status] || item.status;
+
+        return `
+          <tr data-id="${item.id}">
+            <td>${item.after_sale_no}</td>
+            <td class="diff-product">加载中...</td>
+            <td class="diff-qty">加载中...</td>
+            <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+            <td>${formatDate(item.created_at)}</td>
+            <td>
+              <button class="btn btn-sm btn-warning" onclick="openDiffModal('${item.id}')">处理差异</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      return `
+        <table class="table">
+          <thead>
+            <tr>
+              <th>售后单号</th>
+              <th>差异商品</th>
+              <th>差异数量</th>
+              <th>状态</th>
+              <th>申请时间</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function openDiffModal(id) {
+      currentAfterSaleId = id;
+      const modal = document.getElementById('diffModal');
+
+      try {
+        let detail = detailMap[id];
+        if (!detail) {
+          detail = await api.getAfterSaleDetail(id);
+          detailMap[id] = detail;
+        }
+
+        document.getElementById('modalAfterSaleNo').textContent = detail.after_sale_no;
+
+        const diffRecords = detail.differenceRecords || [];
+        const items = detail.items || [];
+        currentDifferenceIds = diffRecords.filter(d => !d.handled).map(d => d.id);
+
+        const diffEl = document.getElementById('diffItems');
+        diffEl.innerHTML = diffRecords.map(diff => {
+          const item = items.find(i => i.id === diff.after_sale_item_id);
+          const productName = item ? item.product_name : '未知商品';
+          const productSku = item ? item.product_sku : '-';
+
+          return `
+            <div style="padding:12px;background:#fafafa;border-radius:8px;">
+              <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+                <div>
+                  <div style="font-weight:500;">${productName}</div>
+                  <div style="font-size:12px;color:#999;">SKU: ${productSku}</div>
+                </div>
+                ${diff.handled ? '<span class="badge badge-green">已处理</span>' : '<span class="badge badge-orange">待处理</span>'}
+              </div>
+              <div style="display:flex;gap:16px;font-size:13px;">
+                <div>
+                  <span style="color:#999;">申请数量：</span>
+                  <span>${diff.apply_quantity} 件</span>
+                </div>
+                <div>
+                  <span style="color:#999;">实收数量：</span>
+                  <span>${diff.actual_quantity} 件</span>
+                </div>
+                <div>
+                  <span style="color:#ff4d4f;">差异：</span>
+                  <span style="color:#ff4d4f;font-weight:500;">${diff.difference} 件</span>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('');
+
+        document.getElementById('handleAction').value = '';
+        document.getElementById('actionHint').style.display = 'none';
+
+        document.getElementById('handleAction').onchange = function() {
+          const hintEl = document.getElementById('actionHint');
+          const action = this.value;
+
+          if (action === 'refund_actual') {
+            hintEl.textContent = '按实际收货数量退款，差异部分不予退款。';
+            hintEl.style.display = 'block';
+          } else if (action === 'cancel_difference') {
+            hintEl.textContent = '取消差异部分，视为全部收货完成，继续后续流程。';
+            hintEl.style.display = 'block';
+          } else {
+            hintEl.style.display = 'none';
+          }
+        };
+
+        modal.classList.add('show');
+      } catch (err) {
+        showToast('加载详情失败: ' + err.message, 'error');
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('diffModal').classList.remove('show');
+      currentAfterSaleId = null;
+      currentDifferenceIds = [];
+    }
+
+    async function submitHandle() {
+      if (!currentAfterSaleId) return;
+
+      const action = document.getElementById('handleAction').value;
+
+      if (!action) {
+        showToast('请选择处理方式', 'error');
+        return;
+      }
+
+      if (currentDifferenceIds.length === 0) {
+        showToast('没有待处理的差异项', 'warning');
+        return;
+      }
+
+      try {
+        await api.handleDifference(currentAfterSaleId, currentDifferenceIds, action);
+        showToast('差异处理成功', 'success');
+        closeModal();
+        loadList();
+      } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+      }
+    }
+
+    loadList();
+  </script>
+</body>
+</html>

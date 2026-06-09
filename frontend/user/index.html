@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>我的订单 - 用户中心</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🛒 用户中心</h1>
+      <div class="user-info">
+        <span id="userName"></span>
+        <a href="after-sale-list.html" class="btn btn-sm btn-default">售后记录</a>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="nav-tabs">
+      <div class="nav-tab active" data-status="">全部订单</div>
+      <div class="nav-tab" data-status="completed">已完成</div>
+      <div class="nav-tab" data-status="shipped">已发货</div>
+      <div class="nav-tab" data-status="delivered">已收货</div>
+    </div>
+
+    <div id="orderList"></div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    const user = getCurrentUser();
+    document.getElementById('userName').textContent = user?.username || '';
+
+    let currentStatus = '';
+
+    async function loadOrders() {
+      const listEl = document.getElementById('orderList');
+      listEl.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载中...</div>';
+      
+      try {
+        const orders = await api.getOrders(currentStatus);
+        
+        if (orders.length === 0) {
+          listEl.innerHTML = `
+            <div class="empty">
+              <div class="empty-icon">📦</div>
+              <p>暂无订单</p>
+            </div>
+          `;
+          return;
+        }
+        
+        listEl.innerHTML = orders.map(order => renderOrderCard(order)).join('');
+      } catch (err) {
+        listEl.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    function renderOrderCard(order) {
+      const canApply = ['completed', 'shipped', 'delivered'].includes(order.status);
+      const statusMap = {
+        pending_payment: { text: '待付款', class: 'status-pending' },
+        paid: { text: '已付款', class: 'status-processing' },
+        shipped: { text: '已发货', class: 'status-processing' },
+        delivered: { text: '已收货', class: 'status-processing' },
+        completed: { text: '已完成', class: 'status-completed' },
+        cancelled: { text: '已取消', class: 'status-cancelled' }
+      };
+      const statusInfo = statusMap[order.status] || { text: order.status, class: '' };
+      
+      return `
+        <div class="order-card">
+          <div class="order-header">
+            <span class="order-no">订单号: ${order.order_no}</span>
+            <span class="order-status ${statusInfo.class}">${statusInfo.text}</span>
+          </div>
+          <div class="order-items">
+            <div style="color:#999;font-size:13px;">共 ${order.item_count || '多'} 件商品</div>
+          </div>
+          <div class="order-footer">
+            <span>实付: <span class="order-amount">${formatMoney(order.pay_amount)}</span></span>
+            <div class="order-actions">
+              ${canApply ? `<button onclick="goApply('${order.id}')" class="btn btn-sm btn-primary">申请售后</button>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    function goApply(orderId) {
+      window.location.href = `after-sale-apply.html?orderId=${orderId}`;
+    }
+
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentStatus = tab.dataset.status;
+        loadOrders();
+      });
+    });
+
+    loadOrders();
+  </script>
+</body>
+</html>

@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>管理控制台 - 售后管理系统</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .layout {
+      display: flex;
+      min-height: 100vh;
+    }
+    
+    .sidebar {
+      width: 220px;
+      background: #001529;
+      color: white;
+      flex-shrink: 0;
+    }
+    
+    .sidebar-logo {
+      padding: 20px 16px;
+      font-size: 18px;
+      font-weight: 600;
+      border-bottom: 1px solid rgba(255,255,255,0.1);
+    }
+    
+    .sidebar-menu {
+      list-style: none;
+      padding: 8px 0;
+    }
+    
+    .sidebar-menu-item {
+      padding: 12px 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+      color: rgba(255,255,255,0.75);
+      font-size: 14px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    
+    .sidebar-menu-item:hover {
+      background: rgba(255,255,255,0.1);
+      color: white;
+    }
+    
+    .sidebar-menu-item.active {
+      background: #1890ff;
+      color: white;
+    }
+    
+    .main-content {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: #f5f7fa;
+    }
+    
+    .top-header {
+      background: white;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+      padding: 0 24px;
+      height: 60px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    
+    .top-header-title {
+      font-size: 18px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+    
+    .top-header-right {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+    
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      font-size: 14px;
+      color: #666;
+    }
+    
+    .user-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 50%;
+      background: #4a90d9;
+      color: white;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 500;
+    }
+    
+    .content-area {
+      flex: 1;
+      padding: 24px;
+      overflow-y: auto;
+    }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 16px;
+      margin-bottom: 24px;
+    }
+    
+    .stat-card {
+      background: white;
+      border-radius: 12px;
+      padding: 20px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+    }
+    
+    .stat-title {
+      font-size: 14px;
+      color: #999;
+      margin-bottom: 8px;
+    }
+    
+    .stat-value {
+      font-size: 28px;
+      font-weight: 600;
+      color: #1a1a2e;
+    }
+    
+    .stat-icon {
+      font-size: 32px;
+      float: right;
+    }
+    
+    @media (max-width: 768px) {
+      .sidebar {
+        display: none;
+      }
+      
+      .stats-grid {
+        grid-template-columns: 1fr 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <div class="sidebar">
+      <div class="sidebar-logo">🛠️ 售后管理系统</div>
+      <ul class="sidebar-menu" id="menuList"></ul>
+    </div>
+    
+    <div class="main-content">
+      <div class="top-header">
+        <div class="top-header-title" id="pageTitle">控制台</div>
+        <div class="top-header-right">
+          <div class="user-info">
+            <div class="user-avatar" id="userAvatar">U</div>
+            <div>
+              <div id="userName">用户</div>
+              <div style="font-size: 12px; color: #999;" id="userRole">角色</div>
+            </div>
+          </div>
+          <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+        </div>
+      </div>
+      
+      <div class="content-area" id="contentArea">
+        <div id="dashboardView">
+          <h2 class="page-title">工作台</h2>
+          <div class="stats-grid" id="statsGrid"></div>
+          <div class="card">
+            <h3>待处理任务</h3>
+            <div id="taskList" style="min-height: 200px;"></div>
+          </div>
+        </div>
+        
+        <div id="listView" style="display: none;">
+          <h2 class="page-title" id="listTitle"></h2>
+          <div class="card">
+            <div id="listContent"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    const user = getCurrentUser();
+    if (!user || user.role === UserRole.CUSTOMER) {
+      showToast('无权访问管理端', 'error');
+      setTimeout(() => {
+        window.location.href = '../login.html';
+      }, 1000);
+      throw new Error('无权限');
+    }
+
+    const menuConfig = [
+      { key: 'dashboard', label: '控制台', icon: '📊', roles: [UserRole.CS_AGENT, UserRole.WAREHOUSE_STAFF, UserRole.FINANCE_STAFF, UserRole.ADMIN] },
+      { key: 'review', label: '售后审核', icon: '📝', roles: [UserRole.CS_AGENT, UserRole.ADMIN] },
+      { key: 'refund', label: '退款处理', icon: '💰', roles: [UserRole.FINANCE_STAFF, UserRole.ADMIN] },
+      { key: 'receive', label: '退货入库', icon: '📦', roles: [UserRole.WAREHOUSE_STAFF, UserRole.ADMIN] },
+      { key: 'exchange', label: '换货出库', icon: '🔄', roles: [UserRole.WAREHOUSE_STAFF, UserRole.ADMIN] },
+      { key: 'difference', label: '差异处理', icon: '⚠️', roles: [UserRole.CS_AGENT, UserRole.ADMIN] },
+      { key: 'inventory', label: '库存管理', icon: '📋', roles: [UserRole.WAREHOUSE_STAFF, UserRole.ADMIN] }
+    ];
+
+    let currentMenu = 'dashboard';
+
+    function initUserInfo() {
+      document.getElementById('userName').textContent = user.username || '';
+      document.getElementById('userRole').textContent = roleLabels[user.role] || user.role;
+      document.getElementById('userAvatar').textContent = (user.username || 'U').charAt(0).toUpperCase();
+    }
+
+    function renderMenu() {
+      const menuList = document.getElementById('menuList');
+      const visibleMenus = menuConfig.filter(m => m.roles.includes(user.role));
+      
+      menuList.innerHTML = visibleMenus.map(menu => `
+        <li class="sidebar-menu-item ${currentMenu === menu.key ? 'active' : ''}" 
+            onclick="switchMenu('${menu.key}')" data-key="${menu.key}">
+          <span>${menu.icon}</span>
+          <span>${menu.label}</span>
+        </li>
+      `).join('');
+    }
+
+    function switchMenu(key) {
+      currentMenu = key;
+      renderMenu();
+      
+      const menuItem = menuConfig.find(m => m.key === key);
+      document.getElementById('pageTitle').textContent = menuItem ? menuItem.label : '';
+      
+      if (key === 'dashboard') {
+        document.getElementById('dashboardView').style.display = 'block';
+        document.getElementById('listView').style.display = 'none';
+        loadDashboard();
+      } else {
+        document.getElementById('dashboardView').style.display = 'none';
+        document.getElementById('listView').style.display = 'block';
+        loadList(key);
+      }
+    }
+
+    async function loadDashboard() {
+      const statsGrid = document.getElementById('statsGrid');
+      const taskList = document.getElementById('taskList');
+      
+      statsGrid.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">加载中...</div>';
+      taskList.innerHTML = '<div style="text-align:center;padding:20px;color:#999;">加载中...</div>';
+      
+      try {
+        const list = await api.getAfterSaleList();
+        
+        const stats = {
+          pending: list.filter(i => i.status === AfterSaleStatus.PENDING_REVIEW).length,
+          processing: list.filter(i => [AfterSaleStatus.PENDING_RETURN, AfterSaleStatus.PENDING_RECEIVE, AfterSaleStatus.PENDING_REFUND, AfterSaleStatus.REFUNDING, AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND].includes(i.status)).length,
+          completed: list.filter(i => i.status === AfterSaleStatus.COMPLETED || i.status === AfterSaleStatus.REFUND_SUCCESS || i.status === AfterSaleStatus.EXCHANGE_OUTBOUND).length,
+          total: list.length
+        };
+        
+        statsGrid.innerHTML = `
+          <div class="stat-card">
+            <span class="stat-icon">⏳</span>
+            <div class="stat-title">待审核</div>
+            <div class="stat-value" style="color: #faad14;">${stats.pending}</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-icon">🔄</span>
+            <div class="stat-title">处理中</div>
+            <div class="stat-value" style="color: #1890ff;">${stats.processing}</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-icon">✅</span>
+            <div class="stat-title">已完成</div>
+            <div class="stat-value" style="color: #52c41a;">${stats.completed}</div>
+          </div>
+          <div class="stat-card">
+            <span class="stat-icon">📊</span>
+            <div class="stat-title">全部</div>
+            <div class="stat-value">${stats.total}</div>
+          </div>
+        `;
+        
+        const pendingTasks = list
+          .filter(i => i.status === AfterSaleStatus.PENDING_REVIEW || i.status === AfterSaleStatus.PENDING_DIFFERENCE)
+          .slice(0, 5);
+        
+        if (pendingTasks.length === 0) {
+          taskList.innerHTML = '<div style="color: #999; text-align: center; padding: 40px;">暂无待处理任务 🎉</div>';
+        } else {
+          taskList.innerHTML = pendingTasks.map(item => {
+            const statusClass = statusClassMap[item.status] || 'tag-pending';
+            const statusText = statusLabels[item.status] || item.status;
+            return `
+              <div class="detail-row" style="cursor: pointer;" onclick="goDetail('${item.id}')">
+                <div class="detail-value">
+                  <span style="font-weight: 500;">${item.after_sale_no}</span>
+                  <span class="status-tag ${statusClass}" style="margin-left: 12px;">${statusText}</span>
+                </div>
+                <div style="color: #999; font-size: 13px;">${formatDate(item.created_at)}</div>
+              </div>
+            `;
+          }).join('');
+        }
+      } catch (err) {
+        statsGrid.innerHTML = `<div class="alert alert-error" style="grid-column: 1/-1;">加载失败: ${err.message}</div>`;
+        taskList.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    async function loadList(type) {
+      const listTitle = document.getElementById('listTitle');
+      const listContent = document.getElementById('listContent');
+      const menuItem = menuConfig.find(m => m.key === type);
+      listTitle.textContent = menuItem ? menuItem.label : '';
+      
+      listContent.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载中...</div>';
+      
+      try {
+        let status = '';
+        if (type === 'review') status = AfterSaleStatus.PENDING_REVIEW;
+        else if (type === 'refund') status = AfterSaleStatus.REFUNDING;
+        else if (type === 'receive') status = AfterSaleStatus.PENDING_RECEIVE;
+        else if (type === 'exchange') status = AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND;
+        else if (type === 'difference') status = AfterSaleStatus.PENDING_DIFFERENCE;
+        
+        const list = status ? await api.getAfterSaleList(status) : await api.getAfterSaleList();
+        
+        if (type === 'inventory') {
+          loadInventoryList();
+          return;
+        }
+        
+        if (type === 'refund') {
+          loadRefundList();
+          return;
+        }
+        
+        if (list.length === 0) {
+          listContent.innerHTML = `
+            <div class="empty">
+              <div class="empty-icon">📭</div>
+              <p>暂无数据</p>
+            </div>
+          `;
+          return;
+        }
+        
+        listContent.innerHTML = `
+          <table class="table">
+            <thead>
+              <tr>
+                <th>售后单号</th>
+                <th>类型</th>
+                <th>申请金额</th>
+                <th>状态</th>
+                <th>申请时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${list.map(item => {
+                const statusClass = statusClassMap[item.status] || 'tag-pending';
+                const statusText = statusLabels[item.status] || item.status;
+                return `
+                  <tr>
+                    <td>${item.after_sale_no}</td>
+                    <td>${typeLabels[item.type] || item.type}</td>
+                    <td style="color: #ff4d4f;">${formatMoney(item.apply_amount)}</td>
+                    <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+                    <td>${formatDate(item.created_at)}</td>
+                    <td>
+                      <button class="btn btn-sm btn-primary" onclick="goDetail('${item.id}')">查看</button>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        listContent.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    async function loadRefundList() {
+      const listContent = document.getElementById('listContent');
+      
+      try {
+        const refunds = await api.getRefundList();
+        
+        if (refunds.length === 0) {
+          listContent.innerHTML = `
+            <div class="empty">
+              <div class="empty-icon">💰</div>
+              <p>暂无退款记录</p>
+            </div>
+          `;
+          return;
+        }
+        
+        const refundStatusMap = {
+          pending: { text: '待退款', class: 'tag-pending' },
+          processing: { text: '退款中', class: 'tag-processing' },
+          success: { text: '成功', class: 'tag-success' },
+          failed: { text: '失败', class: 'tag-failed' }
+        };
+        
+        listContent.innerHTML = `
+          <table class="table">
+            <thead>
+              <tr>
+                <th>退款单号</th>
+                <th>售后单号</th>
+                <th>退款金额</th>
+                <th>状态</th>
+                <th>创建时间</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${refunds.map(refund => {
+                const statusInfo = refundStatusMap[refund.status] || { text: refund.status, class: '' };
+                return `
+                  <tr>
+                    <td>${refund.refund_no}</td>
+                    <td>${refund.after_sale_no || '-'}</td>
+                    <td style="color: #ff4d4f;">${formatMoney(refund.amount)}</td>
+                    <td><span class="status-tag ${statusInfo.class}">${statusInfo.text}</span></td>
+                    <td>${formatDate(refund.created_at)}</td>
+                    <td>
+                      ${refund.after_sale_id ? `<button class="btn btn-sm btn-primary" onclick="goDetail('${refund.after_sale_id}')">查看</button>` : '-'}
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        listContent.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    async function loadInventoryList() {
+      const listContent = document.getElementById('listContent');
+      
+      try {
+        const inventory = await api.getInventoryList();
+        
+        if (inventory.length === 0) {
+          listContent.innerHTML = `
+            <div class="empty">
+              <div class="empty-icon">📦</div>
+              <p>暂无库存数据</p>
+            </div>
+          `;
+          return;
+        }
+        
+        listContent.innerHTML = `
+          <table class="table">
+            <thead>
+              <tr>
+                <th>商品ID</th>
+                <th>商品名称</th>
+                <th>SKU</th>
+                <th>可用库存</th>
+                <th>锁定库存</th>
+                <th>总库存</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${inventory.map(item => `
+                <tr>
+                  <td>${item.product_id}</td>
+                  <td>${item.product_name}</td>
+                  <td>${item.product_sku || '-'}</td>
+                  <td style="color: #52c41a;">${item.available_quantity || 0}</td>
+                  <td style="color: #faad14;">${item.locked_quantity || 0}</td>
+                  <td>${item.total_quantity || 0}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (err) {
+        listContent.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    function goDetail(id) {
+      window.location.href = `after-sale-detail.html?id=${id}`;
+    }
+
+    initUserInfo();
+    renderMenu();
+    loadDashboard();
+  </script>
+</body>
+</html>

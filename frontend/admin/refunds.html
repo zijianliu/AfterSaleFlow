@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>退款处理 - 管理后台</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>⚙️ 售后管理系统</h1>
+      <div class="user-info">
+        <span id="userName"></span>
+        <span id="userRole"></span>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2 class="page-title">退款处理</h2>
+
+    <div class="card">
+      <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 160px;">
+          <label>退款状态</label>
+          <select id="statusFilter">
+            <option value="">全部状态</option>
+            <option value="pending">待退款</option>
+            <option value="processing">退款中</option>
+            <option value="success">退款成功</option>
+            <option value="failed">退款失败</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: flex-end; gap: 8px;">
+          <button onclick="loadRefunds()" class="btn btn-primary">查询</button>
+          <button onclick="resetFilters()" class="btn btn-default">重置</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>退款单号</th>
+            <th>关联售后单号</th>
+            <th>退款金额</th>
+            <th>状态</th>
+            <th>创建时间</th>
+            <th>失败原因</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="refundTable">
+        </tbody>
+      </table>
+      <div id="emptyState" style="display: none;">
+        <div class="empty">
+          <div class="empty-icon">💰</div>
+          <p>暂无退款记录</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    if (!checkRole([UserRole.FINANCE_STAFF, UserRole.ADMIN], '../login.html')) {
+      throw new Error('无权访问');
+    }
+
+    const user = getCurrentUser();
+    document.getElementById('userName').textContent = user?.username || '';
+    document.getElementById('userRole').textContent = roleLabels[user?.role] || '';
+
+    const refundStatusLabels = {
+      pending: '待退款',
+      processing: '退款中',
+      success: '退款成功',
+      failed: '退款失败'
+    };
+
+    const refundStatusClassMap = {
+      pending: 'tag-pending',
+      processing: 'tag-processing',
+      success: 'tag-success',
+      failed: 'tag-failed'
+    };
+
+    async function loadRefunds() {
+      const status = document.getElementById('statusFilter').value;
+      const tableEl = document.getElementById('refundTable');
+      const emptyEl = document.getElementById('emptyState');
+
+      tableEl.innerHTML = '<tr><td colspan="7" style="text-align:center;padding:40px;color:#999;">加载中...</td></tr>';
+      emptyEl.style.display = 'none';
+
+      try {
+        const list = await api.getRefundList(status);
+
+        if (list.length === 0) {
+          tableEl.innerHTML = '';
+          emptyEl.style.display = 'block';
+          return;
+        }
+
+        tableEl.innerHTML = list.map(item => renderRow(item)).join('');
+      } catch (err) {
+        tableEl.innerHTML = `<tr><td colspan="7"><div class="alert alert-error">加载失败: ${err.message}</div></td></tr>`;
+      }
+    }
+
+    function renderRow(item) {
+      const statusClass = refundStatusClassMap[item.status] || 'tag-pending';
+      const statusText = refundStatusLabels[item.status] || item.status;
+      const canRetry = item.status === 'failed';
+      const failReason = item.fail_reason || item.failure_reason || '-';
+
+      return `
+        <tr>
+          <td>${item.refund_no || item.id}</td>
+          <td>${item.after_sale_no || '-'}</td>
+          <td style="color: #ff4d4f; font-weight: 500;">${formatMoney(item.amount || item.refund_amount || 0)}</td>
+          <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+          <td>${formatDate(item.created_at)}</td>
+          <td style="max-width: 200px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${failReason}">${failReason}</td>
+          <td>
+            <button class="btn btn-sm btn-default" onclick="viewDetail('${item.id}')">查看</button>
+            ${canRetry ? `<button class="btn btn-sm btn-warning" onclick="retryRefund('${item.id}')" style="margin-left: 8px;">重试</button>` : ''}
+          </td>
+        </tr>
+      `;
+    }
+
+    function viewDetail(id) {
+      showToast('详情页面开发中', 'info');
+    }
+
+    async function retryRefund(id) {
+      if (!confirm('确定要重新发起退款吗？')) {
+        return;
+      }
+
+      try {
+        await api.retryRefund(id);
+        showToast('退款重试成功', 'success');
+        loadRefunds();
+      } catch (err) {
+        showToast(err.message || '重试失败', 'error');
+      }
+    }
+
+    function resetFilters() {
+      document.getElementById('statusFilter').value = '';
+      loadRefunds();
+    }
+
+    loadRefunds();
+  </script>
+</body>
+</html>

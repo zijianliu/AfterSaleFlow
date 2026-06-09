@@ -1,0 +1,757 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>售后详情 - 售后管理系统</title>
+  <link rel="stylesheet" href="../css/style.css">
+  <style>
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+    }
+    
+    .action-buttons {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    
+    .difference-item {
+      background: #fffbe6;
+      border: 1px solid #ffe58f;
+      border-radius: 8px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+    
+    .difference-item-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+    
+    .difference-tag {
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 12px;
+      background: #fff1f0;
+      color: #ff4d4f;
+    }
+    
+    .receive-quantity-input {
+      width: 80px;
+    }
+    
+    .product-select-item {
+      padding: 10px;
+      border: 1px solid #e8e8e8;
+      border-radius: 8px;
+      margin-bottom: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    
+    .product-select-item:hover {
+      border-color: #4a90d9;
+      background: #f0f7ff;
+    }
+    
+    .product-select-item.selected {
+      border-color: #4a90d9;
+      background: #e6f7ff;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🛠️ 售后管理系统</h1>
+      <div class="user-info">
+        <span id="userName"></span>
+        <span class="badge" id="userRole"></span>
+        <a href="index.html" class="btn btn-sm btn-default">返回首页</a>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="page-header">
+      <h2 class="page-title" style="margin-bottom: 0;">售后详情</h2>
+      <div class="action-buttons" id="actionButtons"></div>
+    </div>
+    
+    <div id="detailContent"></div>
+  </div>
+
+  <div class="modal" id="rejectModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>审核拒绝</h3>
+        <button class="modal-close" onclick="closeRejectModal()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>拒绝原因</label>
+        <textarea id="rejectReason" rows="4" placeholder="请输入拒绝原因"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeRejectModal()">取消</button>
+        <button class="btn btn-danger" onclick="submitReject()">确认拒绝</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="receiveModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>确认收货</h3>
+        <button class="modal-close" onclick="closeReceiveModal()">&times;</button>
+      </div>
+      <p style="margin-bottom: 16px; color: #666;">请确认实际收到的商品数量：</p>
+      <div id="receiveItemsList"></div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeReceiveModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitReceive()">确认收货</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="exchangeModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>换货出库</h3>
+        <button class="modal-close" onclick="closeExchangeModal()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>选择换货商品</label>
+        <div id="exchangeProductList" style="max-height: 200px; overflow-y: auto;"></div>
+      </div>
+      <div class="form-group">
+        <label>物流公司</label>
+        <select id="exchangeLogisticsCompany">
+          <option value="">请选择物流公司</option>
+          <option value="顺丰速运">顺丰速运</option>
+          <option value="京东物流">京东物流</option>
+          <option value="圆通速递">圆通速递</option>
+          <option value="中通快递">中通快递</option>
+          <option value="申通快递">申通快递</option>
+          <option value="韵达快递">韵达快递</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>物流单号</label>
+        <input type="text" id="exchangeLogisticsNo" placeholder="请输入物流单号">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeExchangeModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitExchange()">确认出库</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="differenceModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>差异处理</h3>
+        <button class="modal-close" onclick="closeDifferenceModal()">&times;</button>
+      </div>
+      <p style="margin-bottom: 16px; color: #666;">请选择处理方式：</p>
+      <div id="differenceItemsList"></div>
+      <div class="form-group">
+        <label>处理方式</label>
+        <select id="differenceAction">
+          <option value="">请选择处理方式</option>
+          <option value="refund_partial">部分退款</option>
+          <option value="accept">按实收继续</option>
+          <option value="return">退回用户</option>
+        </select>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeDifferenceModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitDifference()">确认处理</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    const user = getCurrentUser();
+    if (!user || user.role === UserRole.CUSTOMER) {
+      showToast('无权访问管理端', 'error');
+      setTimeout(() => {
+        window.location.href = '../login.html';
+      }, 1000);
+      throw new Error('无权限');
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const afterSaleId = params.get('id');
+
+    if (!afterSaleId) {
+      showToast('售后单ID不存在', 'error');
+      setTimeout(() => window.location.href = 'index.html', 1000);
+    }
+
+    let detail = null;
+    let products = [];
+    let selectedExchangeProductId = null;
+    let selectedDifferenceItemIds = [];
+
+    function initUserInfo() {
+      document.getElementById('userName').textContent = user.username || '';
+      document.getElementById('userRole').textContent = roleLabels[user.role] || user.role;
+    }
+
+    async function loadDetail() {
+      const contentEl = document.getElementById('detailContent');
+      contentEl.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载中...</div>';
+      
+      try {
+        detail = await api.getAfterSaleDetail(afterSaleId);
+        renderDetail();
+        renderActionButtons();
+      } catch (err) {
+        contentEl.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    function renderDetail() {
+      const contentEl = document.getElementById('detailContent');
+      const statusClass = statusClassMap[detail.status] || 'tag-pending';
+      const statusText = statusLabels[detail.status] || detail.status;
+      
+      contentEl.innerHTML = `
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="margin: 0;">售后单信息</h3>
+            <span class="status-tag ${statusClass}">${statusText}</span>
+          </div>
+          <div class="grid-2">
+            <div class="detail-row">
+              <div class="detail-label">售后单号</div>
+              <div class="detail-value">${detail.after_sale_no}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">售后类型</div>
+              <div class="detail-value">${typeLabels[detail.type] || detail.type}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">关联订单</div>
+              <div class="detail-value">${detail.order_id}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">申请人</div>
+              <div class="detail-value">${detail.user_name || '-'}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">申请时间</div>
+              <div class="detail-value">${formatDate(detail.created_at)}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">申请金额</div>
+              <div class="detail-value" style="color: #ff4d4f; font-weight: 500;">${formatMoney(detail.apply_amount)}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">实际退款</div>
+              <div class="detail-value" style="color: #ff4d4f; font-weight: 500;">${formatMoney(detail.actual_refund_amount || 0)}</div>
+            </div>
+          </div>
+          <div class="detail-row" style="margin-top: 8px;">
+            <div class="detail-label">售后原因</div>
+            <div class="detail-value">${detail.reason || '-'}</div>
+          </div>
+          ${detail.reject_reason ? `
+          <div class="detail-row">
+            <div class="detail-label">拒绝原因</div>
+            <div class="detail-value" style="color: #ff4d4f;">${detail.reject_reason}</div>
+          </div>
+          ` : ''}
+          ${detail.return_logistics_no ? `
+          <div class="detail-row">
+            <div class="detail-label">退货物流</div>
+            <div class="detail-value">${detail.return_logistics_company || ''} ${detail.return_logistics_no}</div>
+          </div>
+          ` : ''}
+          ${detail.exchange_logistics_no ? `
+          <div class="detail-row">
+            <div class="detail-label">换货物流</div>
+            <div class="detail-value">${detail.exchange_logistics_company || ''} ${detail.exchange_logistics_no}</div>
+          </div>
+          ` : ''}
+        </div>
+
+        <div class="card">
+          <h3>商品明细</h3>
+          <div id="itemsList"></div>
+        </div>
+
+        <div class="card" id="differenceCard" style="display: none;">
+          <h3>差异记录</h3>
+          <div id="differenceList"></div>
+        </div>
+
+        <div class="card">
+          <h3>退款记录</h3>
+          <div id="refundList"></div>
+        </div>
+
+        <div class="card">
+          <h3>状态流转记录</h3>
+          <div id="logsList"></div>
+        </div>
+      `;
+
+      renderItems();
+      renderDifferences();
+      renderRefunds();
+      renderLogs();
+    }
+
+    function renderItems() {
+      const items = detail.items || [];
+      const listEl = document.getElementById('itemsList');
+      
+      if (items.length === 0) {
+        listEl.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">暂无商品</div>';
+        return;
+      }
+
+      listEl.innerHTML = items.map(item => `
+        <div class="order-item" style="border-bottom: 1px solid #f5f5f5; padding: 12px 0;">
+          <div class="item-image">📦</div>
+          <div class="item-info">
+            <div class="item-name">${item.product_name}</div>
+            <div class="item-sku">${item.product_sku || '-'}</div>
+          </div>
+          <div class="item-price">${formatMoney(item.unit_price)}</div>
+          <div style="text-align: right;">
+            <div>申请: ${item.apply_quantity} 件</div>
+            ${item.actual_quantity !== null && item.actual_quantity !== undefined ? 
+              `<div style="color: ${item.actual_quantity < item.apply_quantity ? '#faad14' : '#52c41a'}; font-size: 12px;">实收: ${item.actual_quantity} 件</div>` 
+              : ''}
+            ${item.has_difference ? `<div class="difference-tag" style="margin-top: 4px;">有差异</div>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderDifferences() {
+      const items = detail.items || [];
+      const diffItems = items.filter(item => item.has_difference);
+      const cardEl = document.getElementById('differenceCard');
+      const listEl = document.getElementById('differenceList');
+      
+      if (diffItems.length === 0) {
+        cardEl.style.display = 'none';
+        return;
+      }
+      
+      cardEl.style.display = 'block';
+      
+      listEl.innerHTML = diffItems.map(item => `
+        <div class="difference-item">
+          <div class="difference-item-header">
+            <span style="font-weight: 500;">${item.product_name}</span>
+            <span class="difference-tag">数量差异</span>
+          </div>
+          <div style="font-size: 13px; color: #666;">
+            申请数量: ${item.apply_quantity} 件 | 实收数量: ${item.actual_quantity || 0} 件 | 
+            差异数量: <span style="color: #ff4d4f; font-weight: 500;">${item.apply_quantity - (item.actual_quantity || 0)} 件</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderRefunds() {
+      const refunds = detail.refundRecords || [];
+      const listEl = document.getElementById('refundList');
+      
+      if (refunds.length === 0) {
+        listEl.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">暂无退款记录</div>';
+        return;
+      }
+
+      const statusMap = {
+        pending: { text: '待退款', class: 'tag-pending' },
+        processing: { text: '退款中', class: 'tag-processing' },
+        success: { text: '成功', class: 'tag-success' },
+        failed: { text: '失败', class: 'tag-failed' }
+      };
+
+      listEl.innerHTML = refunds.map(refund => {
+        const statusInfo = statusMap[refund.status] || { text: refund.status, class: '' };
+        return `
+          <div class="detail-row">
+            <div class="detail-label">退款单号</div>
+            <div class="detail-value">
+              ${refund.refund_no}
+              <span class="status-tag ${statusInfo.class}" style="margin-left: 8px;">${statusInfo.text}</span>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">退款金额</div>
+            <div class="detail-value" style="color: #ff4d4f;">${formatMoney(refund.amount)}</div>
+          </div>
+          ${refund.failure_reason ? `
+          <div class="detail-row">
+            <div class="detail-label">失败原因</div>
+            <div class="detail-value" style="color: #ff4d4f;">${refund.failure_reason}</div>
+          </div>
+          ` : ''}
+          <div class="detail-row">
+            <div class="detail-label">创建时间</div>
+            <div class="detail-value">${formatDate(refund.created_at)}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderLogs() {
+      const logs = detail.logs || [];
+      const listEl = document.getElementById('logsList');
+      
+      if (logs.length === 0) {
+        listEl.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">暂无操作记录</div>';
+        return;
+      }
+
+      listEl.innerHTML = `<div class="timeline">${logs.map(log => `
+        <div class="timeline-item">
+          <div class="timeline-time">${formatDate(log.created_at)}</div>
+          <div class="timeline-action">
+            ${log.action}
+            <span class="badge" style="margin-left: 8px;">${roleLabels[log.operator_role] || log.operator_role}</span>
+            ${log.operator_name ? `<span style="margin-left: 4px; color: #666; font-size: 12px;">(${log.operator_name})</span>` : ''}
+          </div>
+          ${log.from_status && log.to_status ? `
+          <div class="timeline-remark">
+            ${statusLabels[log.from_status] || log.from_status} → ${statusLabels[log.to_status] || log.to_status}
+          </div>
+          ` : ''}
+          ${log.remark ? `<div class="timeline-remark">${log.remark}</div>` : ''}
+        </div>
+      `).join('')}</div>`;
+    }
+
+    function renderActionButtons() {
+      const buttonsEl = document.getElementById('actionButtons');
+      const status = detail.status;
+      const role = user.role;
+      
+      let buttons = [];
+      
+      if (role === UserRole.CS_AGENT || role === UserRole.ADMIN) {
+        if (status === AfterSaleStatus.PENDING_REVIEW) {
+          buttons.push('<button class="btn btn-success" onclick="approveAfterSale()">审核通过</button>');
+          buttons.push('<button class="btn btn-danger" onclick="openRejectModal()">审核拒绝</button>');
+        }
+        if (status === AfterSaleStatus.PENDING_DIFFERENCE) {
+          buttons.push('<button class="btn btn-warning" onclick="openDifferenceModal()">处理差异</button>');
+        }
+        if (status === AfterSaleStatus.PENDING_REFUND || status === AfterSaleStatus.REFUND_FAILED) {
+          if (detail.type === AfterSaleType.EXCHANGE) {
+            buttons.push('<button class="btn btn-primary" onclick="convertToRefund()">转退款</button>');
+          }
+        }
+        if ([AfterSaleStatus.PENDING_RETURN, AfterSaleStatus.PENDING_RECEIVE, AfterSaleStatus.PENDING_REFUND, AfterSaleStatus.REFUNDING, AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND].includes(status)) {
+          buttons.push('<button class="btn btn-default" onclick="cancelAfterSale()">取消</button>');
+        }
+        if (status === AfterSaleStatus.REFUND_SUCCESS || status === AfterSaleStatus.EXCHANGE_OUTBOUND) {
+          buttons.push('<button class="btn btn-success" onclick="completeAfterSale()">完成</button>');
+        }
+      }
+      
+      if (role === UserRole.WAREHOUSE_STAFF || role === UserRole.ADMIN) {
+        if (status === AfterSaleStatus.PENDING_RECEIVE) {
+          buttons.push('<button class="btn btn-primary" onclick="openReceiveModal()">确认收货</button>');
+        }
+        if (status === AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND) {
+          buttons.push('<button class="btn btn-success" onclick="openExchangeModal()">换货出库</button>');
+        }
+      }
+      
+      if (role === UserRole.FINANCE_STAFF || role === UserRole.ADMIN) {
+        if (status === AfterSaleStatus.REFUND_FAILED) {
+          buttons.push('<button class="btn btn-primary" onclick="retryRefund()">重试退款</button>');
+        }
+      }
+      
+      buttonsEl.innerHTML = buttons.join('');
+    }
+
+    function openRejectModal() {
+      document.getElementById('rejectReason').value = '';
+      document.getElementById('rejectModal').classList.add('show');
+    }
+
+    function closeRejectModal() {
+      document.getElementById('rejectModal').classList.remove('show');
+    }
+
+    async function submitReject() {
+      const reason = document.getElementById('rejectReason').value.trim();
+      if (!reason) {
+        showToast('请输入拒绝原因', 'warning');
+        return;
+      }
+      
+      try {
+        await api.reviewAfterSale(afterSaleId, false, reason);
+        showToast('已拒绝', 'success');
+        closeRejectModal();
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    async function approveAfterSale() {
+      if (!confirm('确定要审核通过吗？')) return;
+      
+      try {
+        await api.reviewAfterSale(afterSaleId, true);
+        showToast('审核通过', 'success');
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    function openReceiveModal() {
+      const items = detail.items || [];
+      const listEl = document.getElementById('receiveItemsList');
+      
+      listEl.innerHTML = items.map((item, index) => `
+        <div class="detail-row">
+          <div class="detail-label" style="width: 150px;">${item.product_name}</div>
+          <div class="detail-value">
+            <input type="number" class="form-control receive-quantity-input" 
+                   id="receiveQty_${index}" 
+                   value="${item.apply_quantity}" 
+                   min="0" 
+                   max="${item.apply_quantity}"
+                   style="width: 80px; padding: 6px 10px; border: 1px solid #ddd; border-radius: 6px;">
+            <span style="margin-left: 8px; color: #999;">/ ${item.apply_quantity} 件</span>
+          </div>
+        </div>
+      `).join('');
+      
+      document.getElementById('receiveModal').classList.add('show');
+    }
+
+    function closeReceiveModal() {
+      document.getElementById('receiveModal').classList.remove('show');
+    }
+
+    async function submitReceive() {
+      const items = detail.items || [];
+      const receivedItems = [];
+      
+      for (let i = 0; i < items.length; i++) {
+        const qtyInput = document.getElementById(`receiveQty_${i}`);
+        const qty = parseInt(qtyInput.value) || 0;
+        receivedItems.push({
+          itemId: items[i].id,
+          quantity: qty
+        });
+      }
+      
+      try {
+        await api.confirmReturnReceive(afterSaleId, receivedItems);
+        showToast('收货确认成功', 'success');
+        closeReceiveModal();
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    async function openExchangeModal() {
+      selectedExchangeProductId = null;
+      
+      try {
+        products = await api.getProducts();
+        renderExchangeProducts();
+        document.getElementById('exchangeLogisticsCompany').value = '';
+        document.getElementById('exchangeLogisticsNo').value = '';
+        document.getElementById('exchangeModal').classList.add('show');
+      } catch (err) {
+        showToast(err.message || '加载商品失败', 'error');
+      }
+    }
+
+    function renderExchangeProducts() {
+      const listEl = document.getElementById('exchangeProductList');
+      
+      if (products.length === 0) {
+        listEl.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">暂无商品</div>';
+        return;
+      }
+      
+      listEl.innerHTML = products.map(product => `
+        <div class="product-select-item ${selectedExchangeProductId === product.id ? 'selected' : ''}" 
+             onclick="selectExchangeProduct('${product.id}')">
+          <div style="font-weight: 500;">${product.name}</div>
+          <div style="font-size: 12px; color: #999;">${product.sku || ''} | 库存: ${product.stock || 0}</div>
+        </div>
+      `).join('');
+    }
+
+    function selectExchangeProduct(id) {
+      selectedExchangeProductId = id;
+      renderExchangeProducts();
+    }
+
+    function closeExchangeModal() {
+      document.getElementById('exchangeModal').classList.remove('show');
+    }
+
+    async function submitExchange() {
+      const company = document.getElementById('exchangeLogisticsCompany').value;
+      const no = document.getElementById('exchangeLogisticsNo').value.trim();
+      
+      if (!selectedExchangeProductId) {
+        showToast('请选择换货商品', 'warning');
+        return;
+      }
+      if (!company) {
+        showToast('请选择物流公司', 'warning');
+        return;
+      }
+      if (!no) {
+        showToast('请输入物流单号', 'warning');
+        return;
+      }
+      
+      try {
+        await api.exchangeOutbound(afterSaleId, selectedExchangeProductId, no, company);
+        showToast('出库成功', 'success');
+        closeExchangeModal();
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    function openDifferenceModal() {
+      const items = detail.items || [];
+      const diffItems = items.filter(item => item.has_difference);
+      const listEl = document.getElementById('differenceItemsList');
+      selectedDifferenceItemIds = [];
+      
+      listEl.innerHTML = diffItems.map(item => `
+        <div class="detail-row">
+          <div class="detail-label" style="width: 150px;">${item.product_name}</div>
+          <div class="detail-value">
+            <label style="cursor: pointer;">
+              <input type="checkbox" value="${item.id}" 
+                     onchange="toggleDifferenceItem('${item.id}', this.checked)"
+                     checked>
+              差异数量: ${item.apply_quantity - (item.actual_quantity || 0)} 件
+            </label>
+          </div>
+        </div>
+      `).join('');
+      
+      selectedDifferenceItemIds = diffItems.map(item => item.id);
+      document.getElementById('differenceAction').value = '';
+      document.getElementById('differenceModal').classList.add('show');
+    }
+
+    function toggleDifferenceItem(id, checked) {
+      if (checked) {
+        if (!selectedDifferenceItemIds.includes(id)) {
+          selectedDifferenceItemIds.push(id);
+        }
+      } else {
+        selectedDifferenceItemIds = selectedDifferenceItemIds.filter(i => i !== id);
+      }
+    }
+
+    function closeDifferenceModal() {
+      document.getElementById('differenceModal').classList.remove('show');
+    }
+
+    async function submitDifference() {
+      const action = document.getElementById('differenceAction').value;
+      
+      if (selectedDifferenceItemIds.length === 0) {
+        showToast('请选择差异商品', 'warning');
+        return;
+      }
+      if (!action) {
+        showToast('请选择处理方式', 'warning');
+        return;
+      }
+      
+      try {
+        await api.handleDifference(afterSaleId, selectedDifferenceItemIds, action);
+        showToast('处理成功', 'success');
+        closeDifferenceModal();
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    async function convertToRefund() {
+      if (!confirm('确定要转为退款吗？')) return;
+      
+      try {
+        await api.convertToRefund(afterSaleId);
+        showToast('已转退款', 'success');
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    async function cancelAfterSale() {
+      if (!confirm('确定要取消该售后单吗？')) return;
+      
+      try {
+        await api.cancelAfterSale(afterSaleId);
+        showToast('已取消', 'success');
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    async function completeAfterSale() {
+      if (!confirm('确定要完成该售后单吗？')) return;
+      
+      try {
+        await api.completeAfterSale(afterSaleId);
+        showToast('已完成', 'success');
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    async function retryRefund() {
+      if (!confirm('确定要重试退款吗？')) return;
+      
+      try {
+        await api.retryRefund(afterSaleId);
+        showToast('重试成功', 'success');
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    initUserInfo();
+    loadDetail();
+  </script>
+</body>
+</html>

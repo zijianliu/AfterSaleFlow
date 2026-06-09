@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>换货出库 - 管理后台</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🏭 仓库管理 - 换货出库</h1>
+      <div class="user-info">
+        <a href="inbound.html" class="btn btn-sm btn-default">退货入库</a>
+        <a href="outbound.html" class="btn btn-sm btn-primary">换货出库</a>
+        <a href="difference.html" class="btn btn-sm btn-default">差异处理</a>
+        <span id="userName"></span>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2 class="page-title">待出库列表</h2>
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>售后单号</th>
+            <th>原商品</th>
+            <th>换货商品</th>
+            <th>状态</th>
+            <th>申请时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr>
+            <td colspan="6" style="text-align:center;padding:40px;color:#999;">加载中...</td>
+          </tr>
+        </tbody>
+      </table>
+      <div id="emptyState" style="display: none;">
+        <div class="empty">
+          <div class="empty-icon">📤</div>
+          <p>暂无待出库的换货售后单</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="outboundModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>换货出库</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: 16px;">
+          <span style="color:#666;">售后单号：</span>
+          <span id="modalAfterSaleNo" style="font-weight:500;"></span>
+        </div>
+
+        <div class="section-title">原商品</div>
+        <div id="originalItems" style="margin-bottom:20px;"></div>
+
+        <div class="form-group">
+          <label>换货商品 <span style="color:#ff4d4f;">*</span></label>
+          <select id="exchangeProductSelect">
+            <option value="">请选择换货商品</option>
+          </select>
+          <div id="productStockInfo" style="font-size:12px;color:#999;margin-top:4px;"></div>
+        </div>
+
+        <div class="form-group">
+          <label>物流公司 <span style="color:#ff4d4f;">*</span></label>
+          <input type="text" id="logisticsCompany" placeholder="请输入物流公司名称">
+        </div>
+
+        <div class="form-group">
+          <label>物流单号 <span style="color:#ff4d4f;">*</span></label>
+          <input type="text" id="logisticsNo" placeholder="请输入物流单号">
+        </div>
+
+        <div id="stockError" class="alert alert-error" style="display:none;">
+          库存不足，无法出库
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitOutbound()">确认出库</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    if (!checkRole([UserRole.WAREHOUSE_STAFF, UserRole.ADMIN], '../login.html')) {
+      throw new Error('无权访问');
+    }
+
+    const user = getCurrentUser();
+    if (user) {
+      document.getElementById('userName').textContent = user.username + ' (' + roleLabels[user.role] + ')';
+    }
+
+    let currentList = [];
+    let detailMap = {};
+    let products = [];
+    let currentAfterSaleId = null;
+    let currentDetail = null;
+
+    async function loadList() {
+      const tableBody = document.getElementById('tableBody');
+      const emptyState = document.getElementById('emptyState');
+
+      tableBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#999;">加载中...</td></tr>';
+      emptyState.style.display = 'none';
+
+      try {
+        const list = await api.getAfterSaleList(AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND, AfterSaleType.EXCHANGE);
+        currentList = list;
+
+        if (list.length === 0) {
+          tableBody.innerHTML = '';
+          emptyState.style.display = 'block';
+          return;
+        }
+
+        tableBody.innerHTML = list.map(item => renderRow(item)).join('');
+        loadAllDetails(list);
+      } catch (err) {
+        tableBody.innerHTML = `<tr><td colspan="6"><div class="alert alert-error">加载失败: ${err.message}</div></td></tr>`;
+      }
+    }
+
+    async function loadAllDetails(list) {
+      for (const item of list) {
+        try {
+          const detail = await api.getAfterSaleDetail(item.id);
+          detailMap[item.id] = detail;
+          updateTableRow(item.id, detail);
+        } catch (err) {
+          console.error('加载详情失败:', err);
+        }
+      }
+    }
+
+    function updateTableRow(id, detail) {
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      if (!row) return;
+
+      const items = detail.items || [];
+      const productNames = items.map(i => i.product_name).filter(Boolean);
+
+      const originalCell = row.querySelector('.original-product');
+      const exchangeCell = row.querySelector('.exchange-product');
+
+      if (originalCell) {
+        originalCell.textContent = productNames.length > 0 ? productNames.join('、') : '-';
+        originalCell.title = productNames.join('、');
+      }
+      if (exchangeCell) {
+        if (detail.exchange_product_id) {
+          exchangeCell.textContent = '已确定';
+        } else {
+          exchangeCell.textContent = '待选择';
+        }
+      }
+    }
+
+    function renderRow(item) {
+      const statusClass = statusClassMap[item.status] || 'tag-pending';
+      const statusText = statusLabels[item.status] || item.status;
+
+      return `
+        <tr data-id="${item.id}">
+          <td>${item.after_sale_no}</td>
+          <td class="original-product" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">加载中...</td>
+          <td class="exchange-product">加载中...</td>
+          <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+          <td>${formatDate(item.created_at)}</td>
+          <td>
+            <button class="btn btn-sm btn-warning" onclick="openOutboundModal('${item.id}')">出库</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    async function loadProducts() {
+      try {
+        products = await api.getProducts();
+      } catch (err) {
+        console.error('加载商品列表失败:', err);
+      }
+    }
+
+    async function openOutboundModal(id) {
+      currentAfterSaleId = id;
+      const modal = document.getElementById('outboundModal');
+
+      try {
+        let detail = detailMap[id];
+        if (!detail) {
+          detail = await api.getAfterSaleDetail(id);
+          detailMap[id] = detail;
+        }
+        currentDetail = detail;
+
+        document.getElementById('modalAfterSaleNo').textContent = detail.after_sale_no;
+
+        const originalEl = document.getElementById('originalItems');
+        originalEl.innerHTML = detail.items.map(item => `
+          <div style="padding:8px;background:#fafafa;border-radius:6px;margin-bottom:8px;">
+            <div style="font-weight:500;">${item.product_name}</div>
+            <div style="font-size:12px;color:#999;">SKU: ${item.product_sku} | 数量: ${item.actual_quantity || item.apply_quantity} 件 | 单价: ${formatMoney(item.unit_price)}</div>
+          </div>
+        `).join('');
+
+        if (products.length === 0) {
+          await loadProducts();
+        }
+
+        const selectEl = document.getElementById('exchangeProductSelect');
+        const currentUser = getCurrentUser();
+        const filteredProducts = currentUser && currentUser.warehouseId
+          ? products.filter(p => p.warehouse_id === currentUser.warehouseId)
+          : products;
+
+        selectEl.innerHTML = '<option value="">请选择换货商品</option>' +
+          filteredProducts.map(p => `
+            <option value="${p.id}" data-stock="${p.inventory_quantity || 0}">
+              ${p.name} (SKU: ${p.sku}, 库存: ${p.inventory_quantity || 0})
+            </option>
+          `).join('');
+
+        document.getElementById('stockError').style.display = 'none';
+        document.getElementById('productStockInfo').textContent = '';
+        document.getElementById('logisticsCompany').value = '';
+        document.getElementById('logisticsNo').value = '';
+
+        selectEl.onchange = function() {
+          const selectedOption = selectEl.options[selectEl.selectedIndex];
+          const stock = parseInt(selectedOption.dataset.stock || '0', 10);
+          const totalQty = detail.items.reduce((sum, item) => sum + (item.actual_quantity || item.apply_quantity), 0);
+
+          if (selectEl.value) {
+            document.getElementById('productStockInfo').textContent = `当前库存: ${stock} 件，需出库: ${totalQty} 件`;
+            document.getElementById('stockError').style.display = stock < totalQty ? 'block' : 'none';
+          } else {
+            document.getElementById('productStockInfo').textContent = '';
+            document.getElementById('stockError').style.display = 'none';
+          }
+        };
+
+        modal.classList.add('show');
+      } catch (err) {
+        showToast('加载详情失败: ' + err.message, 'error');
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('outboundModal').classList.remove('show');
+      currentAfterSaleId = null;
+      currentDetail = null;
+    }
+
+    async function submitOutbound() {
+      if (!currentAfterSaleId) return;
+
+      const exchangeProductId = document.getElementById('exchangeProductSelect').value;
+      const logisticsCompany = document.getElementById('logisticsCompany').value.trim();
+      const logisticsNo = document.getElementById('logisticsNo').value.trim();
+
+      if (!exchangeProductId) {
+        showToast('请选择换货商品', 'error');
+        return;
+      }
+
+      if (!logisticsCompany) {
+        showToast('请输入物流公司', 'error');
+        return;
+      }
+
+      if (!logisticsNo) {
+        showToast('请输入物流单号', 'error');
+        return;
+      }
+
+      const selectEl = document.getElementById('exchangeProductSelect');
+      const selectedOption = selectEl.options[selectEl.selectedIndex];
+      const stock = parseInt(selectedOption.dataset.stock || '0', 10);
+      const totalQty = currentDetail.items.reduce((sum, item) => sum + (item.actual_quantity || item.apply_quantity), 0);
+
+      if (stock < totalQty) {
+        showToast('库存不足，无法出库', 'error');
+        document.getElementById('stockError').style.display = 'block';
+        return;
+      }
+
+      try {
+        await api.exchangeOutbound(currentAfterSaleId, exchangeProductId, logisticsNo, logisticsCompany);
+        showToast('出库成功', 'success');
+        closeModal();
+        loadList();
+      } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+      }
+    }
+
+    loadList();
+  </script>
+</body>
+</html>

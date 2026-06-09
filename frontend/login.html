@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>登录 - 售后系统</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="login-container">
+    <h2>售后管理系统</h2>
+    <form id="loginForm">
+      <div class="form-group">
+        <label>用户名</label>
+        <input type="text" id="username" placeholder="请输入用户名" value="user1">
+      </div>
+      <div class="form-group">
+        <label>密码</label>
+        <input type="password" id="password" placeholder="请输入密码" value="123456">
+      </div>
+      <div class="form-group">
+        <label>登录类型</label>
+        <select id="loginType">
+          <option value="user">用户端</option>
+          <option value="admin">管理端</option>
+        </select>
+      </div>
+      <button type="submit" class="btn btn-primary" style="width: 100%;">登录</button>
+    </form>
+    <div style="margin-top: 20px; font-size: 12px; color: #999; text-align: center;">
+      <p>测试账号：</p>
+      <p>用户: user1 / user2 (密码: 123456)</p>
+      <p>客服: cs1 | 仓库: wh1 / wh2 | 财务: finance1 | 管理员: admin</p>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script>
+    document.getElementById('loginForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      const loginType = document.getElementById('loginType').value;
+      
+      if (!username || !password) {
+        showToast('请输入用户名和密码', 'warning');
+        return;
+      }
+      
+      try {
+        const res = await api.login(username, password);
+        setToken(res.token);
+        setCurrentUser(res.user);
+        
+        showToast('登录成功', 'success');
+        
+        setTimeout(() => {
+          if (loginType === 'admin') {
+            window.location.href = 'admin/index.html';
+          } else {
+            window.location.href = 'user/index.html';
+          }
+        }, 500);
+      } catch (err) {
+        showToast(err.message || '登录失败', 'error');
+      }
+    });
+  </script>
+</body>
+</html>

@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>申请售后 - 用户中心</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🛒 申请售后</h1>
+      <div class="user-info">
+        <a href="index.html" class="btn btn-sm btn-default">返回订单</a>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h3>选择售后类型</h3>
+      <div style="display: flex; gap: 16px; margin-bottom: 24px;">
+        <label style="flex: 1; cursor: pointer;">
+          <input type="radio" name="type" value="refund_only" checked style="margin-right: 8px;">
+          <div style="padding: 16px; border: 2px solid #e8e8e8; border-radius: 8px; text-align: center;">
+            <div style="font-size: 24px; margin-bottom: 8px;">💰</div>
+            <div style="font-weight: 500;">仅退款</div>
+            <div style="font-size: 12px; color: #999;">不退货，直接退款</div>
+          </div>
+        </label>
+        <label style="flex: 1; cursor: pointer;">
+          <input type="radio" name="type" value="return_refund" style="margin-right: 8px;">
+          <div style="padding: 16px; border: 2px solid #e8e8e8; border-radius: 8px; text-align: center;">
+            <div style="font-size: 24px; margin-bottom: 8px;">📦</div>
+            <div style="font-weight: 500;">退货退款</div>
+            <div style="font-size: 12px; color: #999;">退货后退款</div>
+          </div>
+        </label>
+        <label style="flex: 1; cursor: pointer;">
+          <input type="radio" name="type" value="exchange" style="margin-right: 8px;">
+          <div style="padding: 16px; border: 2px solid #e8e8e8; border-radius: 8px; text-align: center;">
+            <div style="font-size: 24px; margin-bottom: 8px;">🔄</div>
+            <div style="font-weight: 500;">换货</div>
+            <div style="font-size: 12px; color: #999;">退回更换新品</div>
+          </div>
+        </label>
+      </div>
+
+      <div class="form-group">
+        <label>售后原因</label>
+        <select id="reason">
+          <option value="">请选择售后原因</option>
+          <option value="质量问题">质量问题</option>
+          <option value="发错货">发错货</option>
+          <option value="不喜欢/不想要">不喜欢/不想要</option>
+          <option value="商品与描述不符">商品与描述不符</option>
+          <option value="其他">其他</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label>详细说明</label>
+        <textarea id="reasonDetail" rows="4" placeholder="请详细描述售后原因..."></textarea>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>选择商品</h3>
+      <div id="itemList"></div>
+    </div>
+
+    <div class="card">
+      <h3>退款金额</h3>
+      <div style="font-size: 24px; color: #ff4d4f; font-weight: 600;" id="totalAmount">¥0.00</div>
+      <div style="font-size: 12px; color: #999; margin-top: 8px;">
+        实际退款金额以审核结果为准
+      </div>
+    </div>
+
+    <div style="text-align: right; margin-top: 24px;">
+      <button onclick="submitApply()" class="btn btn-primary" style="padding: 12px 40px;">提交申请</button>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const orderId = params.get('orderId');
+
+    if (!orderId) {
+      showToast('订单ID不存在', 'error');
+      setTimeout(() => window.location.href = 'index.html', 1000);
+    }
+
+    let orderItems = [];
+    let selectedItems = {};
+
+    async function loadOrderItems() {
+      try {
+        const items = await api.getOrderItems(orderId);
+        orderItems = items;
+        renderItems();
+      } catch (err) {
+        showToast(err.message || '加载订单商品失败', 'error');
+      }
+    }
+
+    function renderItems() {
+      const listEl = document.getElementById('itemList');
+      
+      const availableItems = orderItems.filter(item => {
+        const available = item.available_refund_quantity - item.frozen_refund_quantity;
+        return available > 0;
+      });
+
+      if (availableItems.length === 0) {
+        listEl.innerHTML = '<div class="empty"><div class="empty-icon">📦</div><p>该订单无可售后商品</p></div>';
+        return;
+      }
+
+      listEl.innerHTML = availableItems.map(item => {
+        const available = item.available_refund_quantity - item.frozen_refund_quantity;
+        return `
+          <div class="order-item" style="border-bottom: 1px solid #f0f0f0; padding: 16px 0;">
+            <div class="item-image">📱</div>
+            <div class="item-info">
+              <div class="item-name">${item.product_name}</div>
+              <div class="item-sku">${item.product_sku}</div>
+              <div style="font-size: 12px; color: #999; margin-top: 4px;">
+                可售后数量: ${available} 件
+              </div>
+            </div>
+            <div class="item-price">${formatMoney(item.unit_price)}</div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+              <input type="number" 
+                     min="0" 
+                     max="${available}" 
+                     value="0"
+                     data-item-id="${item.id}"
+                     data-unit-price="${item.unit_price}"
+                     class="qty-input"
+                     style="width: 60px; padding: 6px; border: 1px solid #ddd; border-radius: 4px; text-align: center;"
+                     onchange="updateQuantity('${item.id}', this.value, ${available})">
+              <span style="color: #999;">件</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function updateQuantity(itemId, value, maxAvailable) {
+      let qty = parseInt(value) || 0;
+      if (qty < 0) qty = 0;
+      if (qty > maxAvailable) qty = maxAvailable;
+      
+      const input = document.querySelector(`input[data-item-id="${itemId}"]`);
+      if (input) input.value = qty;
+      
+      selectedItems[itemId] = qty;
+      calculateTotal();
+    }
+
+    function calculateTotal() {
+      let total = 0;
+      for (const item of orderItems) {
+        const qty = selectedItems[item.id] || 0;
+        total += qty * item.unit_price;
+      }
+      document.getElementById('totalAmount').textContent = formatMoney(total);
+    }
+
+    function getSelectedType() {
+      const radios = document.querySelectorAll('input[name="type"]:checked');
+      return radios.length > 0 ? radios[0].value : '';
+    }
+
+    async function submitApply() {
+      const type = getSelectedType();
+      const reason = document.getElementById('reason').value;
+      const reasonDetail = document.getElementById('reasonDetail').value.trim();
+
+      if (!type) {
+        showToast('请选择售后类型', 'warning');
+        return;
+      }
+      if (!reason) {
+        showToast('请选择售后原因', 'warning');
+        return;
+      }
+
+      const items = [];
+      for (const item of orderItems) {
+        const qty = selectedItems[item.id] || 0;
+        if (qty > 0) {
+          items.push({ orderItemId: item.id, quantity: qty });
+        }
+      }
+
+      if (items.length === 0) {
+        showToast('请至少选择一件商品', 'warning');
+        return;
+      }
+
+      try {
+        const result = await api.createAfterSale(orderId, type, reason + (reasonDetail ? `：${reasonDetail}` : ''), '', items);
+        showToast('申请成功', 'success');
+        setTimeout(() => {
+          window.location.href = `after-sale-detail.html?id=${result.id}`;
+        }, 1000);
+      } catch (err) {
+        showToast(err.message || '申请失败', 'error');
+      }
+    }
+
+    loadOrderItems();
+  </script>
+</body>
+</html>

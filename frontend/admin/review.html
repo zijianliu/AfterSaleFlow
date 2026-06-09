@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>售后审核 - 管理后台</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>⚙️ 售后管理系统</h1>
+      <div class="user-info">
+        <span id="userName"></span>
+        <span id="userRole"></span>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2 class="page-title">售后审核</h2>
+
+    <div class="card">
+      <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 160px;">
+          <label>状态</label>
+          <select id="statusFilter">
+            <option value="">全部状态</option>
+            <option value="pending_review">待审核</option>
+            <option value="rejected">已拒绝</option>
+            <option value="pending_return">待用户退货</option>
+            <option value="pending_receive">待仓库收货</option>
+            <option value="pending_refund">待退款</option>
+            <option value="refunding">退款中</option>
+            <option value="refund_success">退款成功</option>
+            <option value="refund_failed">退款失败</option>
+            <option value="pending_exchange_outbound">待换货出库</option>
+            <option value="exchange_outbound">换货已出库</option>
+            <option value="completed">已完成</option>
+            <option value="cancelled">已取消</option>
+            <option value="pending_difference">待差异处理</option>
+          </select>
+        </div>
+        <div class="form-group" style="margin-bottom: 0; flex: 1; min-width: 160px;">
+          <label>售后类型</label>
+          <select id="typeFilter">
+            <option value="">全部类型</option>
+            <option value="refund_only">仅退款</option>
+            <option value="return_refund">退货退款</option>
+            <option value="exchange">换货</option>
+          </select>
+        </div>
+        <div style="display: flex; align-items: flex-end; gap: 8px;">
+          <button onclick="loadAfterSales()" class="btn btn-primary">查询</button>
+          <button onclick="resetFilters()" class="btn btn-default">重置</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>售后单号</th>
+            <th>售后类型</th>
+            <th>申请金额</th>
+            <th>状态</th>
+            <th>申请时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="afterSaleTable">
+        </tbody>
+      </table>
+      <div id="emptyState" style="display: none;">
+        <div class="empty">
+          <div class="empty-icon">📋</div>
+          <p>暂无售后记录</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="reviewModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>审核售后单</h3>
+        <button class="modal-close" onclick="closeReviewModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: 16px;">
+          <p style="color: #666;">售后单号：<span id="modalAfterSaleNo" style="color: #333; font-weight: 500;"></span></p>
+        </div>
+        <div class="form-group">
+          <label>审核结果</label>
+          <div style="display: flex; gap: 24px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="radio" name="reviewResult" value="approve" checked> 通过
+            </label>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;">
+              <input type="radio" name="reviewResult" value="reject"> 拒绝
+            </label>
+          </div>
+        </div>
+        <div class="form-group" id="rejectReasonGroup" style="display: none;">
+          <label>拒绝原因</label>
+          <textarea id="rejectReason" rows="4" placeholder="请输入拒绝原因"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeReviewModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitReview()">确认</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    if (!checkRole([UserRole.CS_AGENT, UserRole.ADMIN], '../login.html')) {
+      throw new Error('无权访问');
+    }
+
+    const user = getCurrentUser();
+    document.getElementById('userName').textContent = user?.username || '';
+    document.getElementById('userRole').textContent = roleLabels[user?.role] || '';
+
+    let currentAfterSaleId = null;
+
+    async function loadAfterSales() {
+      const status = document.getElementById('statusFilter').value;
+      const type = document.getElementById('typeFilter').value;
+      const tableEl = document.getElementById('afterSaleTable');
+      const emptyEl = document.getElementById('emptyState');
+
+      tableEl.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#999;">加载中...</td></tr>';
+      emptyEl.style.display = 'none';
+
+      try {
+        const list = await api.getAfterSaleList(status, type);
+
+        if (list.length === 0) {
+          tableEl.innerHTML = '';
+          emptyEl.style.display = 'block';
+          return;
+        }
+
+        tableEl.innerHTML = list.map(item => renderRow(item)).join('');
+      } catch (err) {
+        tableEl.innerHTML = `<tr><td colspan="6"><div class="alert alert-error">加载失败: ${err.message}</div></td></tr>`;
+      }
+    }
+
+    function renderRow(item) {
+      const statusClass = statusClassMap[item.status] || 'tag-pending';
+      const statusText = statusLabels[item.status] || item.status;
+      const typeText = typeLabels[item.type] || item.type;
+      const canReview = item.status === AfterSaleStatus.PENDING_REVIEW;
+
+      return `
+        <tr>
+          <td>${item.after_sale_no}</td>
+          <td>${typeText}</td>
+          <td style="color: #ff4d4f; font-weight: 500;">${formatMoney(item.apply_amount)}</td>
+          <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+          <td>${formatDate(item.created_at)}</td>
+          <td>
+            <button class="btn btn-sm btn-default" onclick="viewDetail('${item.id}')">详情</button>
+            ${canReview ? `<button class="btn btn-sm btn-primary" onclick="openReviewModal('${item.id}', '${item.after_sale_no}')" style="margin-left: 8px;">审核</button>` : ''}
+          </td>
+        </tr>
+      `;
+    }
+
+    function viewDetail(id) {
+      showToast('详情页面开发中', 'info');
+    }
+
+    function openReviewModal(id, afterSaleNo) {
+      currentAfterSaleId = id;
+      document.getElementById('modalAfterSaleNo').textContent = afterSaleNo;
+      document.getElementById('reviewModal').classList.add('show');
+      document.querySelector('input[name="reviewResult"][value="approve"]').checked = true;
+      document.getElementById('rejectReason').value = '';
+      document.getElementById('rejectReasonGroup').style.display = 'none';
+    }
+
+    function closeReviewModal() {
+      currentAfterSaleId = null;
+      document.getElementById('reviewModal').classList.remove('show');
+    }
+
+    async function submitReview() {
+      if (!currentAfterSaleId) return;
+
+      const result = document.querySelector('input[name="reviewResult"]:checked').value;
+      const approved = result === 'approve';
+      const rejectReason = document.getElementById('rejectReason').value.trim();
+
+      if (!approved && !rejectReason) {
+        showToast('请输入拒绝原因', 'warning');
+        return;
+      }
+
+      try {
+        await api.reviewAfterSale(currentAfterSaleId, approved, rejectReason);
+        showToast('审核成功', 'success');
+        closeReviewModal();
+        loadAfterSales();
+      } catch (err) {
+        showToast(err.message || '审核失败', 'error');
+      }
+    }
+
+    function resetFilters() {
+      document.getElementById('statusFilter').value = '';
+      document.getElementById('typeFilter').value = '';
+      loadAfterSales();
+    }
+
+    document.querySelectorAll('input[name="reviewResult"]').forEach(radio => {
+      radio.addEventListener('change', (e) => {
+        const rejectGroup = document.getElementById('rejectReasonGroup');
+        if (e.target.value === 'reject') {
+          rejectGroup.style.display = 'block';
+        } else {
+          rejectGroup.style.display = 'none';
+        }
+      });
+    });
+
+    loadAfterSales();
+  </script>
+</body>
+</html>

@@ -1,0 +1,245 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>退货入库 - 管理后台</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🏭 仓库管理 - 退货入库</h1>
+      <div class="user-info">
+        <a href="inbound.html" class="btn btn-sm btn-primary">退货入库</a>
+        <a href="outbound.html" class="btn btn-sm btn-default">换货出库</a>
+        <a href="difference.html" class="btn btn-sm btn-default">差异处理</a>
+        <span id="userName"></span>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <h2 class="page-title">待收货列表</h2>
+    <div class="card">
+      <table class="table">
+        <thead>
+          <tr>
+            <th>售后单号</th>
+            <th>类型</th>
+            <th>申请数量</th>
+            <th>状态</th>
+            <th>申请时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tableBody">
+          <tr>
+            <td colspan="6" style="text-align:center;padding:40px;color:#999;">加载中...</td>
+          </tr>
+        </tbody>
+      </table>
+      <div id="emptyState" style="display: none;">
+        <div class="empty">
+          <div class="empty-icon">📦</div>
+          <p>暂无待收货的售后单</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="receiveModal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>确认收货</h3>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body">
+        <div style="margin-bottom: 16px;">
+          <span style="color:#666;">售后单号：</span>
+          <span id="modalAfterSaleNo" style="font-weight:500;"></span>
+        </div>
+        <div class="section-title">商品明细</div>
+        <div id="modalItems" style="display:flex;flex-direction:column;gap:12px;"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitReceive()">确认入库</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    if (!checkRole([UserRole.WAREHOUSE_STAFF, UserRole.ADMIN], '../login.html')) {
+      throw new Error('无权访问');
+    }
+
+    const user = getCurrentUser();
+    if (user) {
+      document.getElementById('userName').textContent = user.username + ' (' + roleLabels[user.role] + ')';
+    }
+
+    let currentList = [];
+    let detailMap = {};
+    let currentAfterSaleId = null;
+
+    async function loadList() {
+      const tableBody = document.getElementById('tableBody');
+      const emptyState = document.getElementById('emptyState');
+
+      tableBody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:40px;color:#999;">加载中...</td></tr>';
+      emptyState.style.display = 'none';
+
+      try {
+        const list = await api.getAfterSaleList(AfterSaleStatus.PENDING_RECEIVE);
+        currentList = list;
+
+        if (list.length === 0) {
+          tableBody.innerHTML = '';
+          emptyState.style.display = 'block';
+          return;
+        }
+
+        tableBody.innerHTML = list.map(item => renderRow(item)).join('');
+        loadAllDetails(list);
+      } catch (err) {
+        tableBody.innerHTML = `<tr><td colspan="6"><div class="alert alert-error">加载失败: ${err.message}</div></td></tr>`;
+      }
+    }
+
+    async function loadAllDetails(list) {
+      for (const item of list) {
+        try {
+          const detail = await api.getAfterSaleDetail(item.id);
+          detailMap[item.id] = detail;
+          updateTableRow(item.id, detail);
+        } catch (err) {
+          console.error('加载详情失败:', err);
+        }
+      }
+    }
+
+    function updateTableRow(id, detail) {
+      const row = document.querySelector(`tr[data-id="${id}"]`);
+      if (!row) return;
+
+      const items = detail.items || [];
+      const totalQty = items.reduce((sum, item) => sum + (item.apply_quantity || 0), 0);
+
+      const qtyCell = row.querySelector('.apply-qty');
+      if (qtyCell) {
+        qtyCell.textContent = totalQty + ' 件';
+      }
+    }
+
+    function renderRow(item) {
+      const statusClass = statusClassMap[item.status] || 'tag-pending';
+      const statusText = statusLabels[item.status] || item.status;
+      const typeText = typeLabels[item.type] || item.type;
+
+      return `
+        <tr data-id="${item.id}">
+          <td>${item.after_sale_no}</td>
+          <td>${typeText}</td>
+          <td class="apply-qty">加载中...</td>
+          <td><span class="status-tag ${statusClass}">${statusText}</span></td>
+          <td>${formatDate(item.created_at)}</td>
+          <td>
+            <button class="btn btn-sm btn-success" onclick="openReceiveModal('${item.id}')">确认收货</button>
+          </td>
+        </tr>
+      `;
+    }
+
+    async function openReceiveModal(id) {
+      currentAfterSaleId = id;
+      const modal = document.getElementById('receiveModal');
+
+      try {
+        let detail = detailMap[id];
+        if (!detail) {
+          detail = await api.getAfterSaleDetail(id);
+          detailMap[id] = detail;
+        }
+
+        document.getElementById('modalAfterSaleNo').textContent = detail.after_sale_no;
+
+        const itemsEl = document.getElementById('modalItems');
+        itemsEl.innerHTML = detail.items.map((item, index) => `
+          <div style="padding:12px;background:#fafafa;border-radius:8px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+              <div>
+                <div style="font-weight:500;">${item.product_name}</div>
+                <div style="font-size:12px;color:#999;">SKU: ${item.product_sku}</div>
+              </div>
+              <div style="text-align:right;">
+                <div style="font-size:12px;color:#999;">申请数量</div>
+                <div style="font-weight:500;">${item.apply_quantity} 件</div>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0;">
+              <label>实收数量</label>
+              <input type="number" min="0" max="${item.apply_quantity}" value="${item.apply_quantity}" 
+                     data-item-id="${item.id}" data-apply-qty="${item.apply_quantity}">
+            </div>
+          </div>
+        `).join('');
+
+        modal.classList.add('show');
+      } catch (err) {
+        showToast('加载详情失败: ' + err.message, 'error');
+      }
+    }
+
+    function closeModal() {
+      document.getElementById('receiveModal').classList.remove('show');
+      currentAfterSaleId = null;
+    }
+
+    async function submitReceive() {
+      if (!currentAfterSaleId) return;
+
+      const inputs = document.querySelectorAll('#modalItems input[type="number"]');
+      const receivedItems = [];
+
+      for (const input of inputs) {
+        const itemId = input.dataset.itemId;
+        const qty = parseInt(input.value, 10);
+        const applyQty = parseInt(input.dataset.applyQty, 10);
+
+        if (isNaN(qty) || qty < 0) {
+          showToast('实收数量不能为负数', 'error');
+          return;
+        }
+
+        if (qty > applyQty) {
+          showToast('实收数量不能超过申请数量', 'error');
+          return;
+        }
+
+        receivedItems.push({
+          afterSaleItemId: itemId,
+          actualQuantity: qty
+        });
+      }
+
+      try {
+        await api.confirmReturnReceive(currentAfterSaleId, receivedItems);
+        showToast('收货入库成功', 'success');
+        closeModal();
+        loadList();
+      } catch (err) {
+        showToast('操作失败: ' + err.message, 'error');
+      }
+    }
+
+    loadList();
+  </script>
+</body>
+</html>

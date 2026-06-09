@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>售后详情 - 用户中心</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🛒 售后详情</h1>
+      <div class="user-info">
+        <a href="after-sale-list.html" class="btn btn-sm btn-default">返回列表</a>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div id="detailContent"></div>
+  </div>
+
+  <div class="modal" id="logisticsModal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>填写退货物流</h3>
+        <button class="modal-close" onclick="closeLogisticsModal()">&times;</button>
+      </div>
+      <div class="form-group">
+        <label>物流公司</label>
+        <select id="logisticsCompany">
+          <option value="">请选择物流公司</option>
+          <option value="顺丰速运">顺丰速运</option>
+          <option value="京东物流">京东物流</option>
+          <option value="圆通速递">圆通速递</option>
+          <option value="中通快递">中通快递</option>
+          <option value="申通快递">申通快递</option>
+          <option value="韵达快递">韵达快递</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label>物流单号</label>
+        <input type="text" id="logisticsNo" placeholder="请输入物流单号">
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-default" onclick="closeLogisticsModal()">取消</button>
+        <button class="btn btn-primary" onclick="submitLogistics()">提交</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    const params = new URLSearchParams(window.location.search);
+    const afterSaleId = params.get('id');
+
+    if (!afterSaleId) {
+      showToast('售后单ID不存在', 'error');
+      setTimeout(() => window.location.href = 'after-sale-list.html', 1000);
+    }
+
+    let detail = null;
+
+    async function loadDetail() {
+      const contentEl = document.getElementById('detailContent');
+      contentEl.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载中...</div>';
+      
+      try {
+        detail = await api.getAfterSaleDetail(afterSaleId);
+        renderDetail();
+      } catch (err) {
+        contentEl.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    function renderDetail() {
+      const contentEl = document.getElementById('detailContent');
+      const statusClass = statusClassMap[detail.status] || 'tag-pending';
+      const statusText = statusLabels[detail.status] || detail.status;
+      
+      let actionButtons = '';
+      if (detail.status === AfterSaleStatus.PENDING_RETURN) {
+        actionButtons = `<button class="btn btn-primary" onclick="openLogisticsModal()">填写退货物流</button>`;
+      }
+      if (detail.status === AfterSaleStatus.PENDING_REVIEW) {
+        actionButtons = `<button class="btn btn-default" onclick="cancelAfterSale()">取消申请</button>`;
+      }
+
+      contentEl.innerHTML = `
+        <div class="card">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+            <h3 style="margin: 0;">售后单信息</h3>
+            <span class="status-tag ${statusClass}">${statusText}</span>
+          </div>
+          <div class="grid-2">
+            <div class="detail-row">
+              <div class="detail-label">售后单号</div>
+              <div class="detail-value">${detail.after_sale_no}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">售后类型</div>
+              <div class="detail-value">${typeLabels[detail.type] || detail.type}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">关联订单</div>
+              <div class="detail-value">${detail.order_id}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">申请时间</div>
+              <div class="detail-value">${formatDate(detail.created_at)}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">申请金额</div>
+              <div class="detail-value" style="color: #ff4d4f; font-weight: 500;">${formatMoney(detail.apply_amount)}</div>
+            </div>
+            <div class="detail-row">
+              <div class="detail-label">实际退款</div>
+              <div class="detail-value" style="color: #ff4d4f; font-weight: 500;">${formatMoney(detail.actual_refund_amount || 0)}</div>
+            </div>
+          </div>
+          <div class="detail-row" style="margin-top: 8px;">
+            <div class="detail-label">售后原因</div>
+            <div class="detail-value">${detail.reason || '-'}</div>
+          </div>
+          ${detail.reject_reason ? `
+          <div class="detail-row">
+            <div class="detail-label">拒绝原因</div>
+            <div class="detail-value" style="color: #ff4d4f;">${detail.reject_reason}</div>
+          </div>
+          ` : ''}
+          ${detail.return_logistics_no ? `
+          <div class="detail-row">
+            <div class="detail-label">退货物流</div>
+            <div class="detail-value">${detail.return_logistics_company || ''} ${detail.return_logistics_no}</div>
+          </div>
+          ` : ''}
+          ${detail.exchange_logistics_no ? `
+          <div class="detail-row">
+            <div class="detail-label">换货物流</div>
+            <div class="detail-value">${detail.exchange_logistics_company || ''} ${detail.exchange_logistics_no}</div>
+          </div>
+          ` : ''}
+          <div style="margin-top: 16px;">
+            ${actionButtons}
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>商品明细</h3>
+          <div id="itemsList"></div>
+        </div>
+
+        <div class="card">
+          <h3>退款记录</h3>
+          <div id="refundList"></div>
+        </div>
+
+        <div class="card">
+          <h3>状态流转记录</h3>
+          <div id="logsList"></div>
+        </div>
+      `;
+
+      renderItems();
+      renderRefunds();
+      renderLogs();
+    }
+
+    function renderItems() {
+      const items = detail.items || [];
+      const listEl = document.getElementById('itemsList');
+      
+      if (items.length === 0) {
+        listEl.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">暂无商品</div>';
+        return;
+      }
+
+      listEl.innerHTML = items.map(item => `
+        <div class="order-item" style="border-bottom: 1px solid #f5f5f5; padding: 12px 0;">
+          <div class="item-image">📦</div>
+          <div class="item-info">
+            <div class="item-name">${item.product_name}</div>
+            <div class="item-sku">${item.product_sku}</div>
+          </div>
+          <div class="item-price">${formatMoney(item.unit_price)}</div>
+          <div style="text-align: right;">
+            <div>申请: ${item.apply_quantity} 件</div>
+            ${item.actual_quantity ? `<div style="color: #52c41a; font-size: 12px;">实收: ${item.actual_quantity} 件</div>` : ''}
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderRefunds() {
+      const refunds = detail.refundRecords || [];
+      const listEl = document.getElementById('refundList');
+      
+      if (refunds.length === 0) {
+        listEl.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">暂无退款记录</div>';
+        return;
+      }
+
+      const statusMap = {
+        pending: { text: '待退款', class: 'tag-pending' },
+        processing: { text: '退款中', class: 'tag-processing' },
+        success: { text: '成功', class: 'tag-success' },
+        failed: { text: '失败', class: 'tag-failed' }
+      };
+
+      listEl.innerHTML = refunds.map(refund => {
+        const statusInfo = statusMap[refund.status] || { text: refund.status, class: '' };
+        return `
+          <div class="detail-row">
+            <div class="detail-label">退款单号</div>
+            <div class="detail-value">
+              ${refund.refund_no}
+              <span class="status-tag ${statusInfo.class}" style="margin-left: 8px;">${statusInfo.text}</span>
+            </div>
+          </div>
+          <div class="detail-row">
+            <div class="detail-label">退款金额</div>
+            <div class="detail-value" style="color: #ff4d4f;">${formatMoney(refund.amount)}</div>
+          </div>
+          ${refund.failure_reason ? `
+          <div class="detail-row">
+            <div class="detail-label">失败原因</div>
+            <div class="detail-value" style="color: #ff4d4f;">${refund.failure_reason}</div>
+          </div>
+          ` : ''}
+          <div class="detail-row">
+            <div class="detail-label">创建时间</div>
+            <div class="detail-value">${formatDate(refund.created_at)}</div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderLogs() {
+      const logs = detail.logs || [];
+      const listEl = document.getElementById('logsList');
+      
+      if (logs.length === 0) {
+        listEl.innerHTML = '<div style="color: #999; text-align: center; padding: 20px;">暂无操作记录</div>';
+        return;
+      }
+
+      listEl.innerHTML = `<div class="timeline">${logs.map(log => `
+        <div class="timeline-item">
+          <div class="timeline-time">${formatDate(log.created_at)}</div>
+          <div class="timeline-action">
+            ${log.action}
+            <span class="badge" style="margin-left: 8px;">${roleLabels[log.operator_role] || log.operator_role}</span>
+          </div>
+          ${log.from_status && log.to_status ? `
+          <div class="timeline-remark">
+            ${statusLabels[log.from_status] || log.from_status} → ${statusLabels[log.to_status] || log.to_status}
+          </div>
+          ` : ''}
+          ${log.remark ? `<div class="timeline-remark">${log.remark}</div>` : ''}
+        </div>
+      `).join('')}</div>`;
+    }
+
+    function openLogisticsModal() {
+      document.getElementById('logisticsModal').classList.add('show');
+    }
+
+    function closeLogisticsModal() {
+      document.getElementById('logisticsModal').classList.remove('show');
+    }
+
+    async function submitLogistics() {
+      const company = document.getElementById('logisticsCompany').value;
+      const no = document.getElementById('logisticsNo').value.trim();
+
+      if (!company) {
+        showToast('请选择物流公司', 'warning');
+        return;
+      }
+      if (!no) {
+        showToast('请输入物流单号', 'warning');
+        return;
+      }
+
+      try {
+        await api.submitReturnLogistics(afterSaleId, no, company);
+        showToast('提交成功', 'success');
+        closeLogisticsModal();
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '提交失败', 'error');
+      }
+    }
+
+    async function cancelAfterSale() {
+      if (!confirm('确定要取消售后申请吗？')) return;
+      
+      try {
+        await api.cancelAfterSale(afterSaleId);
+        showToast('已取消', 'success');
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '取消失败', 'error');
+      }
+    }
+
+    loadDetail();
+  </script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>售后记录 - 用户中心</title>
+  <link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+  <div class="header">
+    <div class="header-content">
+      <h1>🛒 售后记录</h1>
+      <div class="user-info">
+        <a href="index.html" class="btn btn-sm btn-default">返回订单</a>
+        <button onclick="logout()" class="btn btn-sm btn-default">退出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="container">
+    <div class="nav-tabs">
+      <div class="nav-tab active" data-status="">全部</div>
+      <div class="nav-tab" data-status="pending_review">待审核</div>
+      <div class="nav-tab" data-status="pending_return">待退货</div>
+      <div class="nav-tab" data-status="refunding">退款中</div>
+      <div class="nav-tab" data-status="refund_success">已完成</div>
+    </div>
+
+    <div id="afterSaleList"></div>
+  </div>
+
+  <script src="../js/api.js"></script>
+  <script>
+    if (!checkAuth('../login.html')) {
+      throw new Error('未登录');
+    }
+
+    let currentStatus = '';
+
+    async function loadAfterSales() {
+      const listEl = document.getElementById('afterSaleList');
+      listEl.innerHTML = '<div style="text-align:center;padding:40px;color:#999;">加载中...</div>';
+      
+      try {
+        const list = await api.getAfterSaleList(currentStatus);
+        
+        if (list.length === 0) {
+          listEl.innerHTML = `
+            <div class="empty">
+              <div class="empty-icon">📋</div>
+              <p>暂无售后记录</p>
+            </div>
+          `;
+          return;
+        }
+        
+        listEl.innerHTML = list.map(item => renderCard(item)).join('');
+      } catch (err) {
+        listEl.innerHTML = `<div class="alert alert-error">加载失败: ${err.message}</div>`;
+      }
+    }
+
+    function renderCard(item) {
+      const statusClass = statusClassMap[item.status] || 'tag-pending';
+      const statusText = statusLabels[item.status] || item.status;
+      
+      return `
+        <div class="order-card" onclick="goDetail('${item.id}')" style="cursor: pointer;">
+          <div class="order-header">
+            <span class="order-no">售后单号: ${item.after_sale_no}</span>
+            <span class="status-tag ${statusClass}">${statusText}</span>
+          </div>
+          <div style="padding: 8px 0;">
+            <span class="badge badge-blue">${typeLabels[item.type] || item.type}</span>
+            <span style="margin-left: 12px; color: #999; font-size: 13px;">
+              ${formatDate(item.created_at)}
+            </span>
+          </div>
+          <div class="order-footer">
+            <span>申请金额: <span class="order-amount">${formatMoney(item.apply_amount)}</span></span>
+            <span style="color: #999; font-size: 13px;">查看详情 →</span>
+          </div>
+        </div>
+      `;
+    }
+
+    function goDetail(id) {
+      window.location.href = `after-sale-detail.html?id=${id}`;
+    }
+
+    document.querySelectorAll('.nav-tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+        currentStatus = tab.dataset.status;
+        loadAfterSales();
+      });
+    });
+
+    loadAfterSales();
+  </script>
+</body>
+</html>
