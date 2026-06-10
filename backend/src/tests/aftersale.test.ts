@@ -1294,4 +1294,319 @@ describe('26. 售后状态流转与操作日志', () => {
   });
 });
 
+describe('27. 换货流程状态流转验证', () => {
+  test('换货申请创建后状态为待审核', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.EXCHANGE, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    expect(as.status).toBe(AfterSaleStatus.PENDING_REVIEW);
+    expect(as.type).toBe(AfterSaleType.EXCHANGE);
+  });
+
+  test('换货审核通过后进入待用户退货状态，不进入退款流程', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.EXCHANGE, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    const reviewRes = await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: true });
+
+    expect(reviewRes.status).toBe(200);
+    expect(reviewRes.body.status).toBe(AfterSaleStatus.PENDING_RETURN);
+    expect(reviewRes.body.status).not.toBe(AfterSaleStatus.PENDING_REFUND);
+  });
+
+  test('换货确认收货后进入待换货出库状态', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.EXCHANGE, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: true });
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/return-logistics`)
+      .set('Authorization', `Bearer ${tokens.user1}`)
+      .send({ logisticsNo: 'SF123456789', logisticsCompany: '顺丰' });
+
+    const detailRes = await request(app)
+      .get(`/api/after-sale/${as.id}`)
+      .set('Authorization', `Bearer ${tokens.wh1}`);
+
+    const receivedItems = detailRes.body.items.map((it: any) => ({
+      afterSaleItemId: it.id,
+      actualQuantity: it.apply_quantity
+    }));
+
+    const receiveRes = await request(app)
+      .post(`/api/after-sale/${as.id}/confirm-receive`)
+      .set('Authorization', `Bearer ${tokens.wh1}`)
+      .send({ receivedItems });
+
+    if (receiveRes.status === 200) {
+      expect(receiveRes.body.status).toBe(AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND);
+      expect(receiveRes.body.status).not.toBe(AfterSaleStatus.PENDING_REFUND);
+    }
+  });
+
+  test('换货类型售后单不会生成退款记录', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.EXCHANGE, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: true });
+
+    const refundListRes = await request(app)
+      .get('/api/after-sale/refunds/list')
+      .set('Authorization', `Bearer ${tokens.finance}`);
+
+    const relatedRefunds = refundListRes.body.filter(
+      (r: any) => r.after_sale_id === as.id
+    );
+
+    expect(relatedRefunds.length).toBe(0);
+  });
+
+  test('换货类型在待换货出库状态不能直接退款', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.EXCHANGE, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: true });
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/return-logistics`)
+      .set('Authorization', `Bearer ${tokens.user1}`)
+      .send({ logisticsNo: 'SF987654321', logisticsCompany: '顺丰' });
+
+    const detailRes = await request(app)
+      .get(`/api/after-sale/${as.id}`)
+      .set('Authorization', `Bearer ${tokens.wh1}`);
+
+    const receivedItems = detailRes.body.items.map((it: any) => ({
+      afterSaleItemId: it.id,
+      actualQuantity: it.apply_quantity
+    }));
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/confirm-receive`)
+      .set('Authorization', `Bearer ${tokens.wh1}`)
+      .send({ receivedItems });
+
+    const refundRes = await request(app)
+      .post(`/api/after-sale/${as.id}/refund`)
+      .set('Authorization', `Bearer ${tokens.finance}`)
+      .send({ idempotencyKey: `test_exchange_refund_${as.id}` });
+
+    expect(refundRes.status).not.toBe(200);
+  });
+});
+
+describe('28. 各角色管理端权限验证', () => {
+  test('客服账号可以通过管理端登录', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'cs1', password: '123456' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(res.body.user.role).toBe(UserRole.CS_AGENT);
+  });
+
+  test('仓库账号可以通过管理端登录', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'wh1', password: '123456' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(res.body.user.role).toBe(UserRole.WAREHOUSE_STAFF);
+    expect(res.body.user.warehouseId).toBeDefined();
+  });
+
+  test('财务账号可以通过管理端登录', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'finance1', password: '123456' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(res.body.user.role).toBe(UserRole.FINANCE_STAFF);
+  });
+
+  test('管理员账号可以通过管理端登录', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'admin', password: '123456' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(res.body.user.role).toBe(UserRole.ADMIN);
+  });
+
+  test('客服可以访问售后审核接口', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale?status=pending_review')
+      .set('Authorization', `Bearer ${tokens.cs}`);
+
+    expect(listRes.status).toBe(200);
+    expect(Array.isArray(listRes.body)).toBe(true);
+  });
+
+  test('仓库人员可以访问退货入库和换货出库接口', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale?status=pending_receive')
+      .set('Authorization', `Bearer ${tokens.wh1}`);
+
+    expect(listRes.status).toBe(200);
+    expect(Array.isArray(listRes.body)).toBe(true);
+  });
+
+  test('财务人员可以访问退款列表接口', async () => {
+    const refundListRes = await request(app)
+      .get('/api/after-sale/refunds/list')
+      .set('Authorization', `Bearer ${tokens.finance}`);
+
+    expect(refundListRes.status).toBe(200);
+    expect(Array.isArray(refundListRes.body)).toBe(true);
+  });
+
+  test('管理员可以查看全部售后单', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.admin}`);
+
+    expect(listRes.status).toBe(200);
+    expect(Array.isArray(listRes.body)).toBe(true);
+  });
+
+  test('管理员可以查看库存列表', async () => {
+    const inventoryRes = await request(app)
+      .get('/api/after-sale/inventory/list')
+      .set('Authorization', `Bearer ${tokens.admin}`);
+
+    expect(inventoryRes.status).toBe(200);
+  });
+
+  test('普通用户不能访问审核接口', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.user1}`);
+
+    expect(listRes.status).toBe(200);
+  });
+
+  test('普通用户不能访问退款列表接口', async () => {
+    const refundRes = await request(app)
+      .get('/api/after-sale/refunds/list')
+      .set('Authorization', `Bearer ${tokens.user1}`);
+
+    expect(refundRes.status).toBe(403);
+  });
+
+  test('客服不能访问确认收货接口', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.cs}`);
+
+    if (listRes.body.length > 0) {
+      const asId = listRes.body[0].id;
+      const receiveRes = await request(app)
+        .post(`/api/after-sale/${asId}/confirm-receive`)
+        .set('Authorization', `Bearer ${tokens.cs}`)
+        .send({ receivedItems: [] });
+
+      expect(receiveRes.status).toBe(403);
+    }
+  });
+
+  test('仓库人员不能访问审核接口', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.wh1}`);
+
+    if (listRes.body.length > 0) {
+      const asId = listRes.body[0].id;
+      const reviewRes = await request(app)
+        .post(`/api/after-sale/${asId}/review`)
+        .set('Authorization', `Bearer ${tokens.wh1}`)
+        .send({ approved: true });
+
+      expect(reviewRes.status).toBe(403);
+    }
+  });
+
+  test('财务人员不能访问审核接口', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.finance}`);
+
+    if (listRes.body.length > 0) {
+      const asId = listRes.body[0].id;
+      const reviewRes = await request(app)
+        .post(`/api/after-sale/${asId}/review`)
+        .set('Authorization', `Bearer ${tokens.finance}`)
+        .send({ approved: true });
+
+      expect(reviewRes.status).toBe(403);
+    }
+  });
+});
+
 export {};

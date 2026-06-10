@@ -20,26 +20,26 @@
   <div class="container">
     <div class="card">
       <h3>选择售后类型</h3>
-      <div style="display: flex; gap: 16px; margin-bottom: 24px;">
+      <div style="display: flex; gap: 16px; margin-bottom: 24px;" id="typeSelector">
         <label style="flex: 1; cursor: pointer;">
-          <input type="radio" name="type" value="refund_only" checked style="margin-right: 8px;">
-          <div style="padding: 16px; border: 2px solid #e8e8e8; border-radius: 8px; text-align: center;">
+          <input type="radio" name="type" value="refund_only" checked style="margin-right: 8px;" onchange="onTypeChange()">
+          <div class="type-card" data-type="refund_only">
             <div style="font-size: 24px; margin-bottom: 8px;">💰</div>
             <div style="font-weight: 500;">仅退款</div>
             <div style="font-size: 12px; color: #999;">不退货，直接退款</div>
           </div>
         </label>
         <label style="flex: 1; cursor: pointer;">
-          <input type="radio" name="type" value="return_refund" style="margin-right: 8px;">
-          <div style="padding: 16px; border: 2px solid #e8e8e8; border-radius: 8px; text-align: center;">
+          <input type="radio" name="type" value="return_refund" style="margin-right: 8px;" onchange="onTypeChange()">
+          <div class="type-card" data-type="return_refund">
             <div style="font-size: 24px; margin-bottom: 8px;">📦</div>
             <div style="font-weight: 500;">退货退款</div>
             <div style="font-size: 12px; color: #999;">退货后退款</div>
           </div>
         </label>
         <label style="flex: 1; cursor: pointer;">
-          <input type="radio" name="type" value="exchange" style="margin-right: 8px;">
-          <div style="padding: 16px; border: 2px solid #e8e8e8; border-radius: 8px; text-align: center;">
+          <input type="radio" name="type" value="exchange" style="margin-right: 8px;" onchange="onTypeChange()">
+          <div class="type-card" data-type="exchange">
             <div style="font-size: 24px; margin-bottom: 8px;">🔄</div>
             <div style="font-weight: 500;">换货</div>
             <div style="font-size: 12px; color: #999;">退回更换新品</div>
@@ -66,11 +66,11 @@
     </div>
 
     <div class="card">
-      <h3>选择商品</h3>
+      <h3 id="itemSectionTitle">选择商品</h3>
       <div id="itemList"></div>
     </div>
 
-    <div class="card">
+    <div class="card" id="refundAmountCard">
       <h3>退款金额</h3>
       <div style="font-size: 24px; color: #ff4d4f; font-weight: 600;" id="totalAmount">¥0.00</div>
       <div style="font-size: 12px; color: #999; margin-top: 8px;">
@@ -78,10 +78,42 @@
       </div>
     </div>
 
+    <div class="card" id="exchangeInfoCard" style="display: none;">
+      <h3>换货说明</h3>
+      <div class="form-group">
+        <label>换货数量</label>
+        <div style="font-size: 16px; color: #1890ff; font-weight: 500;" id="exchangeQty">0 件</div>
+        <div style="font-size: 12px; color: #999; margin-top: 4px;">
+          请在下方选择需要换货的商品数量
+        </div>
+      </div>
+      <div class="form-group">
+        <label>换货要求（可选）</label>
+        <textarea id="exchangeRemark" rows="3" placeholder="请描述换货要求，如颜色、尺码等..."></textarea>
+      </div>
+      <div style="background: #e6f7ff; padding: 12px; border-radius: 8px; font-size: 13px; color: #1890ff;">
+        <strong>换货流程：</strong>提交申请 → 客服审核 → 您寄回商品 → 仓库收货确认 → 新商品寄出 → 完成换货
+      </div>
+    </div>
+
     <div style="text-align: right; margin-top: 24px;">
       <button onclick="submitApply()" class="btn btn-primary" style="padding: 12px 40px;">提交申请</button>
     </div>
   </div>
+
+  <style>
+    .type-card {
+      padding: 16px;
+      border: 2px solid #e8e8e8;
+      border-radius: 8px;
+      text-align: center;
+      transition: all 0.2s;
+    }
+    input[type="radio"]:checked + .type-card {
+      border-color: #1890ff;
+      background: #f0f8ff;
+    }
+  </style>
 
   <script src="../js/api.js"></script>
   <script>
@@ -99,6 +131,30 @@
 
     let orderItems = [];
     let selectedItems = {};
+    let currentType = 'refund_only';
+
+    function onTypeChange() {
+      const type = getSelectedType();
+      currentType = type;
+      selectedItems = {};
+
+      const refundCard = document.getElementById('refundAmountCard');
+      const exchangeCard = document.getElementById('exchangeInfoCard');
+      const itemTitle = document.getElementById('itemSectionTitle');
+
+      if (type === 'exchange') {
+        refundCard.style.display = 'none';
+        exchangeCard.style.display = 'block';
+        itemTitle.textContent = '选择换货商品';
+      } else {
+        refundCard.style.display = 'block';
+        exchangeCard.style.display = 'none';
+        itemTitle.textContent = '选择商品';
+      }
+
+      renderItems();
+      updateSummary();
+    }
 
     async function loadOrderItems() {
       try {
@@ -114,7 +170,9 @@
       const listEl = document.getElementById('itemList');
       
       const availableItems = orderItems.filter(item => {
-        const available = item.available_refund_quantity - item.frozen_refund_quantity;
+        const available = item.remaining_refund_quantity !== undefined 
+          ? item.remaining_refund_quantity 
+          : (item.available_refund_quantity - item.frozen_refund_quantity);
         return available > 0;
       });
 
@@ -124,7 +182,10 @@
       }
 
       listEl.innerHTML = availableItems.map(item => {
-        const available = item.available_refund_quantity - item.frozen_refund_quantity;
+        const available = item.remaining_refund_quantity !== undefined 
+          ? item.remaining_refund_quantity 
+          : (item.available_refund_quantity - item.frozen_refund_quantity);
+        const selected = selectedItems[item.id] || 0;
         return `
           <div class="order-item" style="border-bottom: 1px solid #f0f0f0; padding: 16px 0;">
             <div class="item-image">📱</div>
@@ -132,7 +193,7 @@
               <div class="item-name">${item.product_name}</div>
               <div class="item-sku">${item.product_sku}</div>
               <div style="font-size: 12px; color: #999; margin-top: 4px;">
-                可售后数量: ${available} 件
+                可${currentType === 'exchange' ? '换货' : '售后'}数量: ${available} 件
               </div>
             </div>
             <div class="item-price">${formatMoney(item.unit_price)}</div>
@@ -140,7 +201,7 @@
               <input type="number" 
                      min="0" 
                      max="${available}" 
-                     value="0"
+                     value="${selected}"
                      data-item-id="${item.id}"
                      data-unit-price="${item.unit_price}"
                      class="qty-input"
@@ -162,16 +223,20 @@
       if (input) input.value = qty;
       
       selectedItems[itemId] = qty;
-      calculateTotal();
+      updateSummary();
     }
 
-    function calculateTotal() {
-      let total = 0;
+    function updateSummary() {
+      let totalQty = 0;
+      let totalAmount = 0;
       for (const item of orderItems) {
         const qty = selectedItems[item.id] || 0;
-        total += qty * item.unit_price;
+        totalQty += qty;
+        totalAmount += qty * item.unit_price;
       }
-      document.getElementById('totalAmount').textContent = formatMoney(total);
+      
+      document.getElementById('totalAmount').textContent = formatMoney(totalAmount);
+      document.getElementById('exchangeQty').textContent = `${totalQty} 件`;
     }
 
     function getSelectedType() {
