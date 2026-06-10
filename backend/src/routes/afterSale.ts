@@ -13,7 +13,7 @@ import {
   getAfterSaleList,
   handleDifference,
 } from '../services/afterSaleService';
-import { retryRefund, getRefundList } from '../services/refundService';
+import { retryRefund, processRefund, getRefundList } from '../services/refundService';
 import { UserRole, AfterSaleStatus, AfterSaleType, RefundStatus } from '../types';
 import { getAllInventory, getInventoryLogs } from '../services/inventoryService';
 import { getAll } from '../db';
@@ -159,12 +159,24 @@ router.post('/:id/confirm-receive', authMiddleware, requireRoles(UserRole.WAREHO
       return;
     }
 
+    const mappedItems = receivedItems.map((item: any) => ({
+      afterSaleItemId: item.afterSaleItemId || item.itemId || item.id,
+      actualQuantity: item.actualQuantity ?? item.quantity ?? 0,
+    }));
+
+    for (const item of mappedItems) {
+      if (!item.afterSaleItemId) {
+        res.status(400).json({ error: '收货明细缺少商品标识' });
+        return;
+      }
+    }
+
     const result = confirmReturnReceive(
       id,
       user.userId,
       user.role as UserRole,
       user.warehouseId,
-      receivedItems
+      mappedItems
     );
 
     res.json(result);
@@ -283,6 +295,31 @@ router.post('/:id/retry-refund', authMiddleware, requireRoles(UserRole.FINANCE_S
   } catch (err: any) {
     console.error('重试退款失败:', err);
     res.status(400).json({ error: err.message || '重试退款失败' });
+  }
+});
+
+router.post('/:id/process-refund', authMiddleware, requireRoles(UserRole.FINANCE_STAFF, UserRole.ADMIN), (req: Request, res: Response) => {
+  try {
+    const user = req.user!;
+    const { id } = req.params;
+
+    const afterSale = getAfterSaleById(id);
+    if (!afterSale) {
+      res.status(404).json({ error: '售后单不存在' });
+      return;
+    }
+
+    if (afterSale.status !== AfterSaleStatus.PENDING_REFUND) {
+      res.status(400).json({ error: '当前状态不支持退款处理，需为待退款状态' });
+      return;
+    }
+
+    processRefund(id, user.userId);
+    const result = getAfterSaleById(id);
+    res.json(result);
+  } catch (err: any) {
+    console.error('处理退款失败:', err);
+    res.status(400).json({ error: err.message || '处理退款失败' });
   }
 });
 

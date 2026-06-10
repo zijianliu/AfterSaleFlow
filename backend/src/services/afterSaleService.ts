@@ -317,14 +317,6 @@ export function confirmReturnReceive(
           'UPDATE order_items SET refunded_quantity = refunded_quantity + ?, frozen_refund_quantity = frozen_refund_quantity - ?, available_refund_quantity = available_refund_quantity - ? WHERE id = ?',
           [received.actualQuantity, item.apply_quantity, received.actualQuantity, item.order_item_id]
         );
-
-        const unreturnedQty = item.apply_quantity - received.actualQuantity;
-        if (unreturnedQty > 0) {
-          runSql(
-            'UPDATE order_items SET frozen_refund_quantity = frozen_refund_quantity - ? WHERE id = ?',
-            [unreturnedQty, item.order_item_id]
-          );
-        }
       }
 
       if (received.actualQuantity !== item.apply_quantity) {
@@ -377,10 +369,6 @@ export function confirmReturnReceive(
       '确认收货入库', afterSale.status as AfterSaleStatus, nextStatus,
       hasDifference ? '收货数量有差异，进入差异处理' : '收货完成'
     );
-
-    if (nextStatus === AfterSaleStatus.PENDING_REFUND) {
-      processRefund(afterSaleId, operatorId);
-    }
 
     return getAfterSaleById(afterSaleId);
   });
@@ -673,7 +661,10 @@ export function getAfterSaleById(id: string): AfterSaleOrder {
   const items = getAll<any>(
     'SELECT * FROM after_sale_items WHERE after_sale_order_id = ? ORDER BY created_at',
     [id]
-  );
+  ).map((item: any) => ({
+    ...item,
+    has_difference: item.actual_quantity !== null && item.actual_quantity !== undefined && item.actual_quantity < item.apply_quantity,
+  }));
 
   const logs = getAll<any>(
     'SELECT * FROM after_sale_logs WHERE after_sale_order_id = ? ORDER BY created_at DESC',

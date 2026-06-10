@@ -299,6 +299,9 @@ function seedData(): void {
   createTestOrder(customer2.id, [product1], warehouse1Id, OrderStatus.DELIVERED, 3);
   createTestOrder(customer1.id, [product1], warehouse1Id, OrderStatus.PENDING_PAYMENT, 4);
   createTestOrder(customer2.id, [product3], warehouse1Id, OrderStatus.CANCELLED, 5);
+  createTestOrder(customer1.id, [product1, product2, product3], warehouse1Id, OrderStatus.COMPLETED, 6);
+  createTestOrder(customer1.id, [product1, product2], warehouse1Id, OrderStatus.COMPLETED, 7);
+  createTestOrder(customer2.id, [product1, product2], warehouse1Id, OrderStatus.COMPLETED, 8);
 }
 
 function createTestOrder(
@@ -316,7 +319,7 @@ function createTestOrder(
   const items: { id: string; productId: string; productName: string; productSku: string; unitPrice: number; quantity: number; availableRefundQuantity: number }[] = [];
 
   for (const product of products) {
-    const qty = 2;
+    const qty = 5;
     const itemAmount = product.price * qty;
     totalAmount += itemAmount;
     items.push({

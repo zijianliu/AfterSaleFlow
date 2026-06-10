@@ -479,6 +479,9 @@
       }
       
       if (role === UserRole.FINANCE_STAFF || role === UserRole.ADMIN) {
+        if (status === AfterSaleStatus.PENDING_REFUND) {
+          buttons.push('<button class="btn btn-primary" onclick="processRefund()">处理退款</button>');
+        }
         if (status === AfterSaleStatus.REFUND_FAILED) {
           buttons.push('<button class="btn btn-primary" onclick="retryRefund()">重试退款</button>');
         }
@@ -732,6 +735,18 @@
       try {
         await api.completeAfterSale(afterSaleId);
         showToast('已完成', 'success');
+        loadDetail();
+      } catch (err) {
+        showToast(err.message || '操作失败', 'error');
+      }
+    }
+
+    async function processRefund() {
+      if (!confirm('确定要处理退款吗？')) return;
+      
+      try {
+        await api.processRefund(afterSaleId);
+        showToast('退款处理成功', 'success');
         loadDetail();
       } catch (err) {
         showToast(err.message || '操作失败', 'error');

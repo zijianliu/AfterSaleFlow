@@ -159,6 +159,12 @@ const api = {
       method: 'POST'
     });
   },
+
+  processRefund(id) {
+    return request(`/after-sale/${id}/process-refund`, {
+      method: 'POST'
+    });
+  },
   
   getRefundList(status) {
     const url = status ? `/after-sale/refunds/list?status=${status}` : '/after-sale/refunds/list';

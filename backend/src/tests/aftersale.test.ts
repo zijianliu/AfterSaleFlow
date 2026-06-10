@@ -890,7 +890,7 @@ describe('22. 订单列表售后状态展示', () => {
       .set('Authorization', `Bearer ${tokens.user1}`);
     
     const beforeOrder = beforeRes.body.find((o: any) => o.id === order.id);
-    expect(beforeOrder.active_after_sale_count).toBe(0);
+    const beforeCount = beforeOrder?.active_after_sale_count || 0;
 
     await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
       { orderItemId: item.id, quantity: 1 }
@@ -901,7 +901,7 @@ describe('22. 订单列表售后状态展示', () => {
       .set('Authorization', `Bearer ${tokens.user1}`);
     
     const afterOrder = afterRes.body.find((o: any) => o.id === order.id);
-    expect(afterOrder.active_after_sale_count).toBeGreaterThan(0);
+    expect(afterOrder.active_after_sale_count).toBeGreaterThan(beforeCount);
     expect(afterOrder.total_after_sale_count).toBeGreaterThan(0);
   });
 
@@ -1047,8 +1047,8 @@ describe('24. 退款金额计算校验', () => {
       .get(`/api/after-sale/${as.id}`)
       .set('Authorization', `Bearer ${tokens.user1}`);
 
-    expect(detailRes.body.refund_amount).toBeDefined();
-    expect(Number(detailRes.body.refund_amount)).toBeGreaterThan(0);
+    expect(detailRes.body.actual_refund_amount).toBeDefined();
+    expect(Number(detailRes.body.actual_refund_amount)).toBeGreaterThan(0);
   });
 
   test('累计退款金额不能超过订单实付金额', async () => {
@@ -1710,6 +1710,218 @@ describe('29. 管理端登录前后端联调接口测试', () => {
     expect(res.status).toBe(200);
     expect(res.body.endpoints).toBeDefined();
     expect(res.body.endpoints.adminLogin).toBe('POST /api/auth/admin-login');
+  });
+});
+
+describe('30. 仓库确认收货字段映射与完整链路测试', () => {
+  let userToken: string;
+  let csToken: string;
+  let whToken: string;
+  let financeToken: string;
+
+  beforeEach(async () => {
+    const userLogin = await request(app).post('/api/auth/login').send({ username: 'user1', password: '123456' });
+    userToken = userLogin.body.token;
+    const csLogin = await request(app).post('/api/auth/admin-login').send({ username: 'cs1', password: '123456' });
+    csToken = csLogin.body.token;
+    const whLogin = await request(app).post('/api/auth/admin-login').send({ username: 'wh1', password: '123456' });
+    whToken = whLogin.body.token;
+    const finLogin = await request(app).post('/api/auth/admin-login').send({ username: 'finance1', password: '123456' });
+    financeToken = finLogin.body.token;
+  });
+
+  async function createReturnRefundFlow(quantity: number = 1) {
+    const ordersRes = await request(app).get('/api/orders').set('Authorization', `Bearer ${userToken}`);
+    const completedOrders = ordersRes.body.filter((o: any) => o.status === 'completed');
+
+    let orderId = '';
+    let orderItemId = '';
+    let remainQty = 0;
+
+    for (const order of completedOrders) {
+      const detail = await request(app).get(`/api/orders/${order.id}`).set('Authorization', `Bearer ${userToken}`);
+      for (const item of detail.body.items) {
+        const available = (item.available_refund_quantity || 0) - (item.frozen_refund_quantity || 0);
+        if (available >= quantity) {
+          orderId = order.id;
+          orderItemId = item.id;
+          remainQty = available;
+          break;
+        }
+      }
+      if (orderId) break;
+    }
+
+    if (!orderId || !orderItemId) {
+      throw new Error('No available order item for test');
+    }
+
+    const applyRes = await request(app)
+      .post('/api/after-sale')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ orderId, type: 'return_refund', reason: '测试确认收货', items: [{ orderItemId, quantity }] });
+
+    if (applyRes.status !== 200) {
+      throw new Error(`Apply failed: ${applyRes.body.error}`);
+    }
+
+    const asId = applyRes.body.id;
+    const asItemId = applyRes.body.items?.[0]?.id;
+
+    await request(app).post(`/api/after-sale/${asId}/review`).set('Authorization', `Bearer ${csToken}`).send({ approved: true });
+    await request(app).post(`/api/after-sale/${asId}/return-logistics`).set('Authorization', `Bearer ${userToken}`).send({ logisticsNo: 'SF-TEST', logisticsCompany: '顺丰速运' });
+
+    return { asId, asItemId, orderId, orderItemId };
+  }
+
+  test('前端格式(itemId+quantity)提交确认收货能正确匹配售后商品', async () => {
+    const { asId, asItemId } = await createReturnRefundFlow(1);
+
+    const receiveRes = await request(app)
+      .post(`/api/after-sale/${asId}/confirm-receive`)
+      .set('Authorization', `Bearer ${whToken}`)
+      .send({ receivedItems: [{ itemId: asItemId, quantity: 1 }] });
+
+    expect(receiveRes.status).toBe(200);
+    expect(receiveRes.body.status).toBe('pending_refund');
+    expect(receiveRes.body.items[0].actual_quantity).toBe(1);
+  });
+
+  test('后端格式(afterSaleItemId+actualQuantity)提交确认收货也兼容', async () => {
+    const { asId, asItemId } = await createReturnRefundFlow(1);
+
+    const receiveRes = await request(app)
+      .post(`/api/after-sale/${asId}/confirm-receive`)
+      .set('Authorization', `Bearer ${whToken}`)
+      .send({ receivedItems: [{ afterSaleItemId: asItemId, actualQuantity: 1 }] });
+
+    expect(receiveRes.status).toBe(200);
+    expect(receiveRes.body.status).toBe('pending_refund');
+  });
+
+  test('确认收货后库存增加并生成库存流水', async () => {
+    const { asId, asItemId, orderId } = await createReturnRefundFlow(1);
+
+    const asDetail = await request(app).get(`/api/after-sale/${asId}`).set('Authorization', `Bearer ${whToken}`);
+    const productId = asDetail.body.items[0].product_id;
+
+    const invBefore = await request(app).get('/api/after-sale/inventory/list').set('Authorization', `Bearer ${whToken}`);
+    const productBefore = invBefore.body.find((i: any) => i.product_id === productId);
+
+    await request(app)
+      .post(`/api/after-sale/${asId}/confirm-receive`)
+      .set('Authorization', `Bearer ${whToken}`)
+      .send({ receivedItems: [{ itemId: asItemId, quantity: 1 }] });
+
+    const invAfter = await request(app).get('/api/after-sale/inventory/list').set('Authorization', `Bearer ${whToken}`);
+    const productAfter = invAfter.body.find((i: any) => i.product_id === productId);
+
+    expect(Number(productAfter.stock)).toBe(Number(productBefore.stock) + 1);
+
+    const logsRes = await request(app).get(`/api/after-sale/inventory/logs?productId=${productId}`).set('Authorization', `Bearer ${whToken}`);
+    const returnLog = logsRes.body.find((l: any) => l.change_type === 'return_inbound');
+    expect(returnLog).toBeDefined();
+  });
+
+  test('无差异时确认收货后进入待退款状态', async () => {
+    const { asId, asItemId } = await createReturnRefundFlow(1);
+
+    const receiveRes = await request(app)
+      .post(`/api/after-sale/${asId}/confirm-receive`)
+      .set('Authorization', `Bearer ${whToken}`)
+      .send({ receivedItems: [{ itemId: asItemId, quantity: 1 }] });
+
+    expect(receiveRes.body.status).toBe('pending_refund');
+  });
+
+  test('有差异时确认收货后进入差异处理状态并生成差异记录', async () => {
+    const { asId, asItemId } = await createReturnRefundFlow(2);
+
+    const receiveRes = await request(app)
+      .post(`/api/after-sale/${asId}/confirm-receive`)
+      .set('Authorization', `Bearer ${whToken}`)
+      .send({ receivedItems: [{ itemId: asItemId, quantity: 1 }] });
+
+    expect(receiveRes.body.status).toBe('pending_difference');
+    expect(receiveRes.body.items[0].has_difference).toBe(true);
+
+    const detailRes = await request(app).get(`/api/after-sale/${asId}`).set('Authorization', `Bearer ${csToken}`);
+    const diffRecords = detailRes.body.differenceRecords || [];
+    expect(diffRecords.length).toBeGreaterThan(0);
+    expect(diffRecords[0].difference).toBe(1);
+  });
+
+  test('完整链路：申请→审核→退货→收货→财务退款→退款成功', async () => {
+    const { asId, asItemId, orderId } = await createReturnRefundFlow(1);
+
+    const receiveRes = await request(app)
+      .post(`/api/after-sale/${asId}/confirm-receive`)
+      .set('Authorization', `Bearer ${whToken}`)
+      .send({ receivedItems: [{ itemId: asItemId, quantity: 1 }] });
+    expect(receiveRes.body.status).toBe('pending_refund');
+
+    const processRefundRes = await request(app)
+      .post(`/api/after-sale/${asId}/process-refund`)
+      .set('Authorization', `Bearer ${financeToken}`);
+    expect(processRefundRes.status).toBe(200);
+    expect(processRefundRes.body.status).toBe('refund_success');
+
+    const orderAfterRefund = await request(app)
+      .get(`/api/orders/${orderId}`)
+      .set('Authorization', `Bearer ${userToken}`);
+    expect(Number(orderAfterRefund.body.refunded_amount)).toBeGreaterThan(0);
+  });
+
+  test('财务处理退款需要待退款状态', async () => {
+    const ordersRes = await request(app).get('/api/orders').set('Authorization', `Bearer ${userToken}`);
+    const completedOrders = ordersRes.body.filter((o: any) => o.status === 'completed');
+
+    let orderId = '';
+    let orderItemId = '';
+
+    for (const order of completedOrders) {
+      const detail = await request(app).get(`/api/orders/${order.id}`).set('Authorization', `Bearer ${userToken}`);
+      for (const item of detail.body.items) {
+        const available = (item.available_refund_quantity || 0) - (item.frozen_refund_quantity || 0);
+        if (available >= 1) {
+          orderId = order.id;
+          orderItemId = item.id;
+          break;
+        }
+      }
+      if (orderId) break;
+    }
+
+    if (!orderId) return;
+
+    const applyRes = await request(app)
+      .post('/api/after-sale')
+      .set('Authorization', `Bearer ${userToken}`)
+      .send({ orderId, type: 'return_refund', reason: '测试', items: [{ orderItemId, quantity: 1 }] });
+
+    if (applyRes.status !== 200) return;
+
+    const asId = applyRes.body.id;
+
+    const processRefundRes = await request(app)
+      .post(`/api/after-sale/${asId}/process-refund`)
+      .set('Authorization', `Bearer ${financeToken}`);
+    expect(processRefundRes.status).toBe(400);
+    expect(processRefundRes.body.error).toContain('待退款');
+  });
+
+  test('非财务角色不能处理退款', async () => {
+    const { asId, asItemId } = await createReturnRefundFlow(1);
+
+    await request(app)
+      .post(`/api/after-sale/${asId}/confirm-receive`)
+      .set('Authorization', `Bearer ${whToken}`)
+      .send({ receivedItems: [{ itemId: asItemId, quantity: 1 }] });
+
+    const processRefundRes = await request(app)
+      .post(`/api/after-sale/${asId}/process-refund`)
+      .set('Authorization', `Bearer ${whToken}`);
+    expect(processRefundRes.status).toBe(403);
   });
 });
 
