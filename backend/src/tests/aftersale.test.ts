@@ -1609,4 +1609,108 @@ describe('28. 各角色管理端权限验证', () => {
   });
 });
 
+describe('29. 管理端登录前后端联调接口测试', () => {
+  test('POST /api/auth/admin-login 路由存在且可访问', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'cs1', password: '123456' });
+
+    expect(res.status).not.toBe(404);
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(res.body.user).toBeDefined();
+  });
+
+  test('管理端登录返回的token包含正确的角色信息', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'wh1', password: '123456' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.user.role).toBe('warehouse_staff');
+    expect(res.body.user.username).toBe('wh1');
+    expect(res.body.user.warehouseId).toBeDefined();
+  });
+
+  test('普通用户登录管理端返回403且不返回token', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'user1', password: '123456' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.token).toBeUndefined();
+    expect(res.body.error).toBeDefined();
+  });
+
+  test('管理端登录失败时不写入登录态', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'user1', password: '123456' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.token).toBeUndefined();
+    expect(res.body.user).toBeUndefined();
+  });
+
+  test('各管理端账号通过admin-login接口都能登录成功', async () => {
+    const accounts = [
+      { username: 'cs1', expectedRole: 'cs_agent' },
+      { username: 'wh1', expectedRole: 'warehouse_staff' },
+      { username: 'wh2', expectedRole: 'warehouse_staff' },
+      { username: 'finance1', expectedRole: 'finance_staff' },
+      { username: 'admin', expectedRole: 'admin' },
+    ];
+
+    for (const account of accounts) {
+      const res = await request(app)
+        .post('/api/auth/admin-login')
+        .send({ username: account.username, password: '123456' });
+
+      expect(res.status).toBe(200);
+      expect(res.body.token).toBeDefined();
+      expect(res.body.user.role).toBe(account.expectedRole);
+    }
+  });
+
+  test('管理端登录token可以访问管理端接口', async () => {
+    const loginRes = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'cs1', password: '123456' });
+
+    const token = loginRes.body.token;
+
+    const meRes = await request(app)
+      .get('/api/auth/me')
+      .set('Authorization', `Bearer ${token}`);
+
+    expect(meRes.status).toBe(200);
+    expect(meRes.body.role).toBe('cs_agent');
+  });
+
+  test('普通login接口与管理端admin-login接口路径不同', async () => {
+    const loginRes = await request(app)
+      .post('/api/auth/login')
+      .send({ username: 'user1', password: '123456' });
+
+    const adminLoginRes = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'user1', password: '123456' });
+
+    expect(loginRes.status).toBe(200);
+    expect(loginRes.body.token).toBeDefined();
+
+    expect(adminLoginRes.status).toBe(403);
+    expect(adminLoginRes.body.token).toBeUndefined();
+  });
+
+  test('健康检查端点返回管理端登录接口信息', async () => {
+    const res = await request(app)
+      .get('/api/health');
+
+    expect(res.status).toBe(200);
+    expect(res.body.endpoints).toBeDefined();
+    expect(res.body.endpoints.adminLogin).toBe('POST /api/auth/admin-login');
+  });
+});
+
 export {};

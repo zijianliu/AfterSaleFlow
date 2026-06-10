@@ -24,7 +24,15 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/after-sale', afterSaleRoutes);
 
 app.get('/api/health', (req: express.Request, res: express.Response) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    endpoints: {
+      login: 'POST /api/auth/login',
+      adminLogin: 'POST /api/auth/admin-login',
+      me: 'GET /api/auth/me',
+    },
+  });
 });
 
 app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
