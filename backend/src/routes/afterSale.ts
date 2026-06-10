@@ -17,8 +17,21 @@ import { retryRefund, getRefundList } from '../services/refundService';
 import { UserRole, AfterSaleStatus, AfterSaleType, RefundStatus } from '../types';
 import { getAllInventory, getInventoryLogs } from '../services/inventoryService';
 import { getAll } from '../db';
+import { statusLabels, typeLabels } from '../services/stateMachine';
 
 const router = Router();
+
+router.get('/status/labels', authMiddleware, (req: Request, res: Response) => {
+  try {
+    res.json({
+      statusLabels,
+      typeLabels,
+    });
+  } catch (err: any) {
+    console.error('获取状态标签失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
 
 router.post('/', authMiddleware, (req: Request, res: Response) => {
   try {

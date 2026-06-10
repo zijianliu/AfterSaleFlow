@@ -211,7 +211,24 @@ export function initDatabase(): void {
   `;
 
   db.exec(schemaSql);
+  migrateSchema();
   seedData();
+}
+
+function migrateSchema(): void {
+  const db = getDb();
+  
+  const cols = db.pragma('table_info(orders)') as any[];
+  const hasRefundedAmount = cols.some((c: any) => c.name === 'refunded_amount');
+  if (!hasRefundedAmount) {
+    db.exec(`ALTER TABLE orders ADD COLUMN refunded_amount REAL NOT NULL DEFAULT 0`);
+  }
+  
+  const itemCols = db.pragma('table_info(order_items)') as any[];
+  const hasItemRefundedAmount = itemCols.some((c: any) => c.name === 'refunded_amount');
+  if (!hasItemRefundedAmount) {
+    db.exec(`ALTER TABLE order_items ADD COLUMN refunded_amount REAL NOT NULL DEFAULT 0`);
+  }
 }
 
 function seedData(): void {

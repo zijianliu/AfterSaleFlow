@@ -53,6 +53,60 @@ router.post('/login', (req: Request, res: Response) => {
   }
 });
 
+const adminRoles = [UserRole.CS_AGENT, UserRole.WAREHOUSE_STAFF, UserRole.FINANCE_STAFF, UserRole.ADMIN];
+
+router.post('/admin-login', (req: Request, res: Response) => {
+  try {
+    const { username, password } = req.body;
+
+    if (!username || !password) {
+      res.status(400).json({ error: '用户名和密码不能为空' });
+      return;
+    }
+
+    const user = getOne<any>(
+      'SELECT id, username, password, role, warehouse_id as warehouseId FROM users WHERE username = ?',
+      [username]
+    );
+
+    if (!user) {
+      res.status(401).json({ error: '用户名或密码错误' });
+      return;
+    }
+
+    const isValid = bcrypt.compareSync(password, user.password);
+    if (!isValid) {
+      res.status(401).json({ error: '用户名或密码错误' });
+      return;
+    }
+
+    if (!adminRoles.includes(user.role as UserRole)) {
+      res.status(403).json({ error: '该账号无管理端访问权限' });
+      return;
+    }
+
+    const token = generateToken({
+      userId: user.id,
+      username: user.username,
+      role: user.role as UserRole,
+      warehouseId: user.warehouseId || undefined,
+    });
+
+    res.json({
+      token,
+      user: {
+        id: user.id,
+        username: user.username,
+        role: user.role,
+        warehouseId: user.warehouseId,
+      },
+    });
+  } catch (err) {
+    console.error('管理端登录失败:', err);
+    res.status(500).json({ error: '服务器内部错误' });
+  }
+});
+
 router.get('/me', authMiddleware, (req: Request, res: Response) => {
   try {
     if (!req.user) {

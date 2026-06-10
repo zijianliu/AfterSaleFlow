@@ -1,7 +1,7 @@
 import { Request, Response, Router } from 'express';
 import { authMiddleware, requireRoles } from '../middleware/auth';
 import { getOne, getAll } from '../db';
-import { UserRole, OrderStatus } from '../types';
+import { UserRole, OrderStatus, AfterSaleStatus } from '../types';
 
 const router = Router();
 
@@ -11,7 +11,9 @@ router.get('/', authMiddleware, (req: Request, res: Response) => {
     const { status } = req.query;
 
     let sql = `SELECT o.*, 
-               (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) as itemCount
+               (SELECT COUNT(*) FROM order_items WHERE order_id = o.id) as item_count,
+               (SELECT COUNT(*) FROM after_sale_orders WHERE order_id = o.id AND status NOT IN ('cancelled', 'rejected', 'completed')) as active_after_sale_count,
+               (SELECT COUNT(*) FROM after_sale_orders WHERE order_id = o.id) as total_after_sale_count
                FROM orders o WHERE 1=1`;
     const params: any[] = [];
 
@@ -57,7 +59,12 @@ router.get('/:id', authMiddleware, (req: Request, res: Response) => {
       [id]
     );
 
-    res.json({ ...order, items });
+    const afterSales = getAll<any>(
+      `SELECT * FROM after_sale_orders WHERE order_id = ? ORDER BY created_at DESC`,
+      [id]
+    );
+
+    res.json({ ...order, items, after_sales: afterSales });
   } catch (err) {
     console.error('获取订单详情失败:', err);
     res.status(500).json({ error: '服务器内部错误' });
@@ -82,7 +89,12 @@ router.get('/:id/items', authMiddleware, (req: Request, res: Response) => {
     }
 
     const items = getAll<any>(
-      'SELECT * FROM order_items WHERE order_id = ? ORDER BY created_at',
+      `SELECT 
+         oi.*,
+         (oi.available_refund_quantity - oi.frozen_refund_quantity) as remaining_refund_quantity
+       FROM order_items oi 
+       WHERE oi.order_id = ? 
+       ORDER BY oi.created_at`,
       [id]
     );
 

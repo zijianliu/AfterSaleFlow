@@ -24,17 +24,17 @@ export enum AfterSaleType {
 export enum AfterSaleStatus {
   PENDING_REVIEW = 'pending_review',
   REJECTED = 'rejected',
-  PENDING_USER_RETURN = 'pending_user_return',
-  PENDING_WAREHOUSE_RECEIVE = 'pending_warehouse_receive',
+  PENDING_RETURN = 'pending_return',
+  PENDING_RECEIVE = 'pending_receive',
   PENDING_REFUND = 'pending_refund',
   REFUNDING = 'refunding',
   REFUND_SUCCESS = 'refund_success',
   REFUND_FAILED = 'refund_failed',
   PENDING_EXCHANGE_OUTBOUND = 'pending_exchange_outbound',
-  EXCHANGE_SHIPPED = 'exchange_shipped',
+  EXCHANGE_OUTBOUND = 'exchange_outbound',
   COMPLETED = 'completed',
   CANCELLED = 'cancelled',
-  PENDING_DIFFERENCE_HANDLING = 'pending_difference_handling'
+  PENDING_DIFFERENCE = 'pending_difference'
 }
 
 export enum RefundStatus {

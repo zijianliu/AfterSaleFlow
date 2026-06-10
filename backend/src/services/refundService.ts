@@ -13,6 +13,21 @@ export function processRefund(
       throw new Error('售后单不存在');
     }
 
+    const order = getOne<any>('SELECT * FROM orders WHERE id = ?', [afterSale.order_id]);
+    if (!order) {
+      throw new Error('订单不存在');
+    }
+
+    const refundAmount = Number(afterSale.actual_refund_amount);
+    if (refundAmount <= 0) {
+      throw new Error('退款金额必须大于0');
+    }
+
+    const totalRefunded = Number(order.refunded_amount || 0);
+    if (totalRefunded + refundAmount > Number(order.pay_amount) + 0.01) {
+      throw new Error(`累计退款金额(${formatMoney(totalRefunded + refundAmount)})不能超过订单实付金额(${formatMoney(order.pay_amount)})`);
+    }
+
     const existingRefund = getOne<any>(
       'SELECT * FROM refund_records WHERE after_sale_order_id = ? AND status != ?',
       [afterSaleId, RefundStatus.FAILED]
@@ -52,7 +67,7 @@ export function processRefund(
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
         [
           refundId, refundNo, afterSaleId, afterSale.order_id, afterSale.user_id,
-          afterSale.actual_refund_amount, RefundStatus.PROCESSING, idempotencyKey, now, now
+          refundAmount, RefundStatus.PROCESSING, idempotencyKey, now, now
         ]
       );
     }
@@ -65,11 +80,11 @@ export function processRefund(
     addAfterSaleLog(
       afterSaleId, operatorId, UserRole.FINANCE_STAFF,
       '发起退款', AfterSaleStatus.PENDING_REFUND, AfterSaleStatus.REFUNDING,
-      `退款金额: ¥${afterSale.actual_refund_amount}`
+      `退款金额: ¥${refundAmount.toFixed(2)}`
     );
 
     try {
-      const success = executeRefundPayment(afterSale.actual_refund_amount);
+      const success = executeRefundPayment(refundAmount);
 
       if (success) {
         runSql(
@@ -84,14 +99,35 @@ export function processRefund(
           [AfterSaleStatus.REFUND_SUCCESS, now, afterSaleId]
         );
 
+        runSql(
+          'UPDATE orders SET refunded_amount = refunded_amount + ?, updated_at = ? WHERE id = ?',
+          [refundAmount, now, afterSale.order_id]
+        );
+
+        const afterSaleItems = getAll<any>(
+          'SELECT * FROM after_sale_items WHERE after_sale_order_id = ?',
+          [afterSaleId]
+        );
+
+        const discountRatio = Number(order.pay_amount) / Number(order.total_amount);
+
+        for (const item of afterSaleItems) {
+          const itemRefundAmount = Number(item.actual_quantity) * Number(item.unit_price) * discountRatio;
+          if (itemRefundAmount > 0) {
+            runSql(
+              'UPDATE order_items SET refunded_amount = refunded_amount + ? WHERE id = ?',
+              [itemRefundAmount, item.order_item_id]
+            );
+          }
+        }
+
         addAfterSaleLog(
           afterSaleId, operatorId, UserRole.FINANCE_STAFF,
           '退款成功', AfterSaleStatus.REFUNDING, AfterSaleStatus.REFUND_SUCCESS,
-          `退款金额: ¥${afterSale.actual_refund_amount}`
+          `退款金额: ¥${refundAmount.toFixed(2)}`
         );
 
-        const order = getOne<any>('SELECT * FROM orders WHERE id = ?', [afterSale.order_id]);
-        if (order && order.coupon_id) {
+        if (order.coupon_id) {
           runSql(
             `UPDATE coupons SET status = 'refunded', refunded_at = ?, order_id = NULL 
              WHERE id = ? AND status = 'used'`,
@@ -146,6 +182,10 @@ function executeRefundPayment(amount: number): boolean {
   }
   
   return true;
+}
+
+function formatMoney(amount: number): string {
+  return `¥${amount.toFixed(2)}`;
 }
 
 export function getRefundByAfterSaleId(afterSaleId: string): any | null {

@@ -385,7 +385,7 @@ describe('9. 入库数量不一致生成差异记录', () => {
       .send({ receivedItems });
 
     expect(confirmRes.status).toBe(200);
-    expect(confirmRes.body.status).toBe(AfterSaleStatus.PENDING_DIFFERENCE_HANDLING);
+    expect(confirmRes.body.status).toBe(AfterSaleStatus.PENDING_DIFFERENCE);
     expect(confirmRes.body.differenceRecords).toBeDefined();
     expect(confirmRes.body.differenceRecords.length).toBeGreaterThan(0);
     
@@ -451,7 +451,7 @@ describe('10. 差异处理', () => {
       });
 
     expect(handleRes.status).toBe(200);
-    expect(handleRes.body.status).not.toBe(AfterSaleStatus.PENDING_DIFFERENCE_HANDLING);
+    expect(handleRes.body.status).not.toBe(AfterSaleStatus.PENDING_DIFFERENCE);
     expect(handleRes.body.difference_handled).toBe(1);
   });
 });
@@ -565,7 +565,7 @@ describe('12. 换货出库流程', () => {
           });
 
         expect(outboundRes.status).toBe(200);
-        expect(outboundRes.body.status).toBe(AfterSaleStatus.EXCHANGE_SHIPPED);
+        expect(outboundRes.body.status).toBe(AfterSaleStatus.EXCHANGE_OUTBOUND);
         expect(outboundRes.body.exchange_logistics_no).toBe('SF998877665');
       }
     }
@@ -607,7 +607,7 @@ describe('13. 换货失败转退款', () => {
       .get(`/api/after-sale/${as.id}`)
       .set('Authorization', `Bearer ${tokens.wh1}`);
 
-    if (detailRes1.body.status === AfterSaleStatus.PENDING_WAREHOUSE_RECEIVE) {
+    if (detailRes1.body.status === AfterSaleStatus.PENDING_RECEIVE) {
       const receivedItems = detailRes1.body.items.map((it: any) => ({
         afterSaleItemId: it.id,
         actualQuantity: it.apply_quantity
@@ -635,7 +635,7 @@ describe('14. 权限控制 - 客服不能直接操作库存', () => {
       .set('Authorization', `Bearer ${tokens.cs}`);
 
     const pendingReceive = listRes.body.find(
-      (a: any) => a.status === AfterSaleStatus.PENDING_WAREHOUSE_RECEIVE
+      (a: any) => a.status === AfterSaleStatus.PENDING_RECEIVE
     );
 
     if (pendingReceive) {
@@ -831,6 +831,466 @@ describe('20. 售后单不能重复入库', () => {
       .send({ receivedItems });
 
     expect(secondRes.status).toBe(400);
+  });
+});
+
+describe('21. 管理端登录权限校验', () => {
+  test('普通用户不能通过管理端登录接口登录', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'user1', password: '123456' });
+
+    expect(res.status).toBe(403);
+    expect(res.body.error).toBeDefined();
+    expect(res.body.token).toBeUndefined();
+  });
+
+  test('客服可以通过管理端登录接口登录', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'cs1', password: '123456' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(res.body.user.role).toBe(UserRole.CS_AGENT);
+  });
+
+  test('管理员可以通过管理端登录接口登录', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'admin', password: '123456' });
+
+    expect(res.status).toBe(200);
+    expect(res.body.token).toBeDefined();
+    expect(res.body.user.role).toBe(UserRole.ADMIN);
+  });
+
+  test('管理端登录密码错误返回401', async () => {
+    const res = await request(app)
+      .post('/api/auth/admin-login')
+      .send({ username: 'cs1', password: 'wrong' });
+
+    expect(res.status).toBe(401);
+  });
+});
+
+describe('22. 订单列表售后状态展示', () => {
+  test('申请售后成功后订单列表显示售后状态', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.available_refund_quantity > i.frozen_refund_quantity);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const beforeRes = await request(app)
+      .get('/api/orders?status=completed')
+      .set('Authorization', `Bearer ${tokens.user1}`);
+    
+    const beforeOrder = beforeRes.body.find((o: any) => o.id === order.id);
+    expect(beforeOrder.active_after_sale_count).toBe(0);
+
+    await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    const afterRes = await request(app)
+      .get('/api/orders?status=completed')
+      .set('Authorization', `Bearer ${tokens.user1}`);
+    
+    const afterOrder = afterRes.body.find((o: any) => o.id === order.id);
+    expect(afterOrder.active_after_sale_count).toBeGreaterThan(0);
+    expect(afterOrder.total_after_sale_count).toBeGreaterThan(0);
+  });
+
+  test('订单详情包含关联的售后单列表', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.available_refund_quantity > i.frozen_refund_quantity);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    const detailRes = await request(app)
+      .get(`/api/orders/${order.id}`)
+      .set('Authorization', `Bearer ${tokens.user1}`);
+
+    expect(detailRes.status).toBe(200);
+    expect(detailRes.body.after_sales).toBeDefined();
+    expect(detailRes.body.after_sales.length).toBeGreaterThan(0);
+  });
+
+  test('订单明细包含剩余可售后数量', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+
+    expect(items.length).toBeGreaterThan(0);
+    items.forEach((item: any) => {
+      expect(item.remaining_refund_quantity).toBeDefined();
+      expect(item.remaining_refund_quantity).toBeGreaterThanOrEqual(0);
+      expect(item.remaining_refund_quantity).toBeLessThanOrEqual(item.available_refund_quantity);
+    });
+  });
+});
+
+describe('23. 可售后数量冻结与超量申请限制', () => {
+  test('同一订单明细不能超量申请售后', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.available_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const overQty = item.available_refund_quantity + 10;
+    const res = await request(app)
+      .post('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.user1}`)
+      .send({
+        orderId: order.id,
+        type: AfterSaleType.REFUND_ONLY,
+        reason: '测试超量申请',
+        items: [{ orderItemId: item.id, quantity: overQty }]
+      });
+
+    expect(res.status).toBe(400);
+  });
+
+  test('申请售后成功后可售后数量减少', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 1);
+
+    if (!item) {
+      console.warn('跳过测试：没有可售后数量大于1的商品');
+      return;
+    }
+
+    const beforeRemaining = item.remaining_refund_quantity;
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    const itemsAfter = await getOrderItems(tokens.user1, order.id);
+    const itemAfter = itemsAfter.find((i: any) => i.id === item.id);
+
+    expect(itemAfter.remaining_refund_quantity).toBe(beforeRemaining - 1);
+    expect(itemAfter.frozen_refund_quantity).toBeGreaterThan(0);
+  });
+
+  test('取消售后单后可售后数量恢复', async () => {
+    const orderRes = await request(app)
+      .get('/api/orders?status=delivered')
+      .set('Authorization', `Bearer ${tokens.user2}`);
+    
+    if (orderRes.body.length === 0) {
+      console.warn('跳过测试：没有已收货订单');
+      return;
+    }
+    
+    const order = orderRes.body[0];
+    const items = await getOrderItems(tokens.user2, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 1);
+
+    if (!item) {
+      console.warn('跳过测试：没有可售后数量大于1的商品');
+      return;
+    }
+
+    const beforeRemaining = item.remaining_refund_quantity;
+
+    const as = await createAfterSale(tokens.user2, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    const itemsAfterCreate = await getOrderItems(tokens.user2, order.id);
+    const itemAfterCreate = itemsAfterCreate.find((i: any) => i.id === item.id);
+    expect(itemAfterCreate.remaining_refund_quantity).toBe(beforeRemaining - 1);
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/cancel`)
+      .set('Authorization', `Bearer ${tokens.user2}`);
+
+    const itemsAfterCancel = await getOrderItems(tokens.user2, order.id);
+    const itemAfterCancel = itemsAfterCancel.find((i: any) => i.id === item.id);
+    expect(itemAfterCancel.remaining_refund_quantity).toBe(beforeRemaining);
+  });
+});
+
+describe('24. 退款金额计算校验', () => {
+  test('退款金额基于实付金额和申请数量计算', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    const detailRes = await request(app)
+      .get(`/api/after-sale/${as.id}`)
+      .set('Authorization', `Bearer ${tokens.user1}`);
+
+    expect(detailRes.body.refund_amount).toBeDefined();
+    expect(Number(detailRes.body.refund_amount)).toBeGreaterThan(0);
+  });
+
+  test('累计退款金额不能超过订单实付金额', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+
+    if (items.length < 2) {
+      console.warn('跳过测试：订单商品数量不足');
+      return;
+    }
+
+    const totalPayAmount = Number(order.pay_amount);
+
+    for (const item of items) {
+      if (item.remaining_refund_quantity > 0) {
+        const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+          { orderItemId: item.id, quantity: item.remaining_refund_quantity }
+        ]);
+
+        await request(app)
+          .post(`/api/after-sale/${as.id}/review`)
+          .set('Authorization', `Bearer ${tokens.cs}`)
+          .send({ approved: true });
+
+        const refundRes = await request(app)
+          .post(`/api/after-sale/${as.id}/refund`)
+          .set('Authorization', `Bearer ${tokens.finance}`)
+          .send({ idempotencyKey: `test_${as.id}_${Date.now()}` });
+
+        if (refundRes.status === 400 && refundRes.body.error?.includes('累计退款金额不能超过订单实付金额')) {
+          expect(refundRes.status).toBe(400);
+          return;
+        }
+      }
+    }
+
+    const orderDetailRes = await request(app)
+      .get(`/api/orders/${order.id}`)
+      .set('Authorization', `Bearer ${tokens.user1}`);
+
+    const refundedAmount = Number(orderDetailRes.body.refunded_amount || 0);
+    expect(refundedAmount).toBeLessThanOrEqual(totalPayAmount + 0.01);
+  });
+
+  test('退款后订单已退款金额正确更新', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const beforeDetail = await request(app)
+      .get(`/api/orders/${order.id}`)
+      .set('Authorization', `Bearer ${tokens.user1}`);
+    const beforeRefunded = Number(beforeDetail.body.refunded_amount || 0);
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: true });
+
+    const refundRes = await request(app)
+      .post(`/api/after-sale/${as.id}/refund`)
+      .set('Authorization', `Bearer ${tokens.finance}`)
+      .send({ idempotencyKey: `test_${as.id}_${Date.now()}` });
+
+    if (refundRes.status === 200) {
+      const afterDetail = await request(app)
+        .get(`/api/orders/${order.id}`)
+        .set('Authorization', `Bearer ${tokens.user1}`);
+      const afterRefunded = Number(afterDetail.body.refunded_amount || 0);
+
+      expect(afterRefunded).toBeGreaterThan(beforeRefunded);
+      expect(afterRefunded).toBeLessThanOrEqual(Number(order.pay_amount) + 0.01);
+    }
+  });
+});
+
+describe('25. 售后状态枚举统一验证', () => {
+  const validStatuses = Object.values(AfterSaleStatus);
+
+  test('所有售后单状态都在定义范围内', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.admin}`);
+
+    expect(Array.isArray(listRes.body)).toBe(true);
+
+    for (const as of listRes.body) {
+      expect(validStatuses).toContain(as.status);
+    }
+  });
+
+  test('售后详情状态在定义范围内', async () => {
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.admin}`);
+
+    if (listRes.body.length > 0) {
+      const asId = listRes.body[0].id;
+      const detailRes = await request(app)
+        .get(`/api/after-sale/${asId}`)
+        .set('Authorization', `Bearer ${tokens.admin}`);
+
+      expect(validStatuses).toContain(detailRes.body.status);
+    }
+  });
+
+  test('状态机标签映射存在且为中文', async () => {
+    const statusList = Object.values(AfterSaleStatus);
+    expect(statusList.length).toBe(13);
+
+    const detailRes = await request(app)
+      .get('/api/after-sale/status/labels')
+      .set('Authorization', `Bearer ${tokens.admin}`);
+
+    expect(detailRes.status).toBe(200);
+    const labels = detailRes.body.statusLabels;
+    expect(labels).toBeDefined();
+    
+    for (const status of statusList) {
+      expect(labels[status]).toBeDefined();
+      expect(typeof labels[status]).toBe('string');
+      expect(labels[status].length).toBeGreaterThan(0);
+    }
+  });
+
+  test('不存在pending_user_return等未定义状态', async () => {
+    const undefinedStatuses = ['pending_user_return', 'pending_warehouse_receive', 'exchange_shipped', 'pending_difference_handling'];
+    
+    const listRes = await request(app)
+      .get('/api/after-sale')
+      .set('Authorization', `Bearer ${tokens.admin}`);
+
+    for (const as of listRes.body) {
+      expect(undefinedStatuses).not.toContain(as.status);
+    }
+  });
+});
+
+describe('26. 售后状态流转与操作日志', () => {
+  test('完整退款流程状态正确流转', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+    expect(as.status).toBe(AfterSaleStatus.PENDING_REVIEW);
+
+    const reviewRes = await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: true });
+    expect(reviewRes.body.status).toBe(AfterSaleStatus.PENDING_REFUND);
+
+    const refundRes = await request(app)
+      .post(`/api/after-sale/${as.id}/refund`)
+      .set('Authorization', `Bearer ${tokens.finance}`)
+      .send({ idempotencyKey: `test_flow_${as.id}_${Date.now()}` });
+
+    if (refundRes.status === 200) {
+      expect(refundRes.body.status).toBe(AfterSaleStatus.REFUND_SUCCESS);
+    }
+  });
+
+  test('操作日志包含每个状态变更记录', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: true });
+
+    const detailRes = await request(app)
+      .get(`/api/after-sale/${as.id}`)
+      .set('Authorization', `Bearer ${tokens.user1}`);
+
+    expect(detailRes.body.logs).toBeDefined();
+    expect(detailRes.body.logs.length).toBeGreaterThanOrEqual(2);
+
+    const actions = detailRes.body.logs.map((log: any) => log.action);
+    expect(actions).toContain('create');
+    expect(actions).toContain('review');
+
+    const statusChangeLogs = detailRes.body.logs.filter((log: any) => log.from_status && log.to_status);
+    expect(statusChangeLogs.length).toBeGreaterThan(0);
+  });
+
+  test('拒绝售后单状态正确流转并记录日志', async () => {
+    const order = await getCompletedOrder(tokens.user1);
+    const items = await getOrderItems(tokens.user1, order.id);
+    const item = items.find(i => i.remaining_refund_quantity > 0);
+
+    if (!item) {
+      console.warn('跳过测试：没有可用的可售后商品');
+      return;
+    }
+
+    const as = await createAfterSale(tokens.user1, order.id, AfterSaleType.REFUND_ONLY, [
+      { orderItemId: item.id, quantity: 1 }
+    ]);
+
+    const rejectRes = await request(app)
+      .post(`/api/after-sale/${as.id}/review`)
+      .set('Authorization', `Bearer ${tokens.cs}`)
+      .send({ approved: false, rejectReason: '测试拒绝' });
+
+    expect(rejectRes.status).toBe(200);
+    expect(rejectRes.body.status).toBe(AfterSaleStatus.REJECTED);
+
+    const detailRes = await request(app)
+      .get(`/api/after-sale/${as.id}`)
+      .set('Authorization', `Bearer ${tokens.user1}`);
+
+    const rejectLog = detailRes.body.logs.find((log: any) => log.action === 'review');
+    expect(rejectLog).toBeDefined();
+    expect(rejectLog.to_status).toBe(AfterSaleStatus.REJECTED);
   });
 });
 

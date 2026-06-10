@@ -226,7 +226,7 @@ export function submitReturnLogistics(
       throw new Error('无权操作该售后单');
     }
 
-    if (afterSale.status !== AfterSaleStatus.PENDING_USER_RETURN) {
+    if (afterSale.status !== AfterSaleStatus.PENDING_RETURN) {
       throw new Error('当前状态不支持填写退货物流');
     }
 
@@ -236,12 +236,12 @@ export function submitReturnLogistics(
       `UPDATE after_sale_orders 
        SET status = ?, return_logistics_no = ?, return_logistics_company = ?, updated_at = ?
        WHERE id = ?`,
-      [AfterSaleStatus.PENDING_WAREHOUSE_RECEIVE, logisticsNo, logisticsCompany, now, afterSaleId]
+      [AfterSaleStatus.PENDING_RECEIVE, logisticsNo, logisticsCompany, now, afterSaleId]
     );
 
     addAfterSaleLog(
       afterSaleId, userId, UserRole.CUSTOMER,
-      '填写退货物流', AfterSaleStatus.PENDING_USER_RETURN, AfterSaleStatus.PENDING_WAREHOUSE_RECEIVE,
+      '填写退货物流', AfterSaleStatus.PENDING_RETURN, AfterSaleStatus.PENDING_RECEIVE,
       `物流公司: ${logisticsCompany}, 物流单号: ${logisticsNo}`
     );
 
@@ -262,7 +262,7 @@ export function confirmReturnReceive(
       throw new Error('售后单不存在');
     }
 
-    if (afterSale.status !== AfterSaleStatus.PENDING_WAREHOUSE_RECEIVE) {
+    if (afterSale.status !== AfterSaleStatus.PENDING_RECEIVE) {
       throw new Error('当前状态不支持确认收货');
     }
 
@@ -357,7 +357,7 @@ export function confirmReturnReceive(
     let nextStatus: AfterSaleStatus;
 
     if (hasDifference) {
-      nextStatus = AfterSaleStatus.PENDING_DIFFERENCE_HANDLING;
+      nextStatus = AfterSaleStatus.PENDING_DIFFERENCE;
     } else if (afterSale.type === AfterSaleType.EXCHANGE) {
       nextStatus = AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND;
     } else {
@@ -399,7 +399,7 @@ export function handleDifference(
       throw new Error('售后单不存在');
     }
 
-    if (afterSale.status !== AfterSaleStatus.PENDING_DIFFERENCE_HANDLING) {
+    if (afterSale.status !== AfterSaleStatus.PENDING_DIFFERENCE) {
       throw new Error('当前状态不支持差异处理');
     }
 
@@ -433,7 +433,7 @@ export function handleDifference(
 
       addAfterSaleLog(
         afterSaleId, handlerId, handlerRole,
-        '差异处理完成', AfterSaleStatus.PENDING_DIFFERENCE_HANDLING, nextStatus,
+        '差异处理完成', AfterSaleStatus.PENDING_DIFFERENCE, nextStatus,
         `处理方式: ${action === 'refund_actual' ? '按实际数量退款' : '取消差异部分'}`
       );
 
@@ -448,7 +448,7 @@ export function handleDifference(
 
       addAfterSaleLog(
         afterSaleId, handlerId, handlerRole,
-        '部分差异处理', AfterSaleStatus.PENDING_DIFFERENCE_HANDLING, undefined,
+        '部分差异处理', AfterSaleStatus.PENDING_DIFFERENCE, undefined,
         '部分差异已处理'
       );
     }
@@ -503,12 +503,12 @@ export function processExchangeOutbound(
        SET status = ?, exchange_product_id = ?, exchange_logistics_no = ?, 
            exchange_logistics_company = ?, updated_at = ?
        WHERE id = ?`,
-      [AfterSaleStatus.EXCHANGE_SHIPPED, exchangeProductId, logisticsNo, logisticsCompany, now, afterSaleId]
+      [AfterSaleStatus.EXCHANGE_OUTBOUND, exchangeProductId, logisticsNo, logisticsCompany, now, afterSaleId]
     );
 
     addAfterSaleLog(
       afterSaleId, operatorId, operatorRole,
-      '换货出库', AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND, AfterSaleStatus.EXCHANGE_SHIPPED,
+      '换货出库', AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND, AfterSaleStatus.EXCHANGE_OUTBOUND,
       `换货商品: ${exchangeProductId}, 物流: ${logisticsCompany} - ${logisticsNo}`
     );
 
@@ -527,7 +527,7 @@ export function convertExchangeToRefund(
       throw new Error('售后单不存在');
     }
 
-    if (afterSale.status !== AfterSaleStatus.EXCHANGE_SHIPPED &&
+    if (afterSale.status !== AfterSaleStatus.EXCHANGE_OUTBOUND &&
         afterSale.status !== AfterSaleStatus.PENDING_EXCHANGE_OUTBOUND) {
       throw new Error('当前状态不支持转退款');
     }
@@ -569,14 +569,14 @@ export function cancelAfterSale(
 
     if (afterSale.status !== AfterSaleStatus.PENDING_REVIEW &&
         afterSale.status !== AfterSaleStatus.REJECTED &&
-        afterSale.status !== AfterSaleStatus.PENDING_USER_RETURN) {
+        afterSale.status !== AfterSaleStatus.PENDING_RETURN) {
       throw new Error('当前状态不支持取消');
     }
 
     const fromStatus = afterSale.status as AfterSaleStatus;
     const now = new Date().toISOString();
 
-    if (fromStatus === AfterSaleStatus.PENDING_REVIEW || fromStatus === AfterSaleStatus.PENDING_USER_RETURN) {
+    if (fromStatus === AfterSaleStatus.PENDING_REVIEW || fromStatus === AfterSaleStatus.PENDING_RETURN) {
       unfreezeOrderItems(afterSaleId);
     }
 
@@ -607,7 +607,7 @@ export function completeAfterSale(
     }
 
     if (afterSale.status !== AfterSaleStatus.REFUND_SUCCESS &&
-        afterSale.status !== AfterSaleStatus.EXCHANGE_SHIPPED) {
+        afterSale.status !== AfterSaleStatus.EXCHANGE_OUTBOUND) {
       throw new Error('当前状态不支持完成');
     }
 

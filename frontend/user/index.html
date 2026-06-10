@@ -65,6 +65,8 @@
 
     function renderOrderCard(order) {
       const canApply = ['completed', 'shipped', 'delivered'].includes(order.status);
+      const hasActiveAfterSale = order.active_after_sale_count > 0;
+      
       const statusMap = {
         pending_payment: { text: '待付款', class: 'status-pending' },
         paid: { text: '已付款', class: 'status-processing' },
@@ -82,12 +84,32 @@
             <span class="order-status ${statusInfo.class}">${statusInfo.text}</span>
           </div>
           <div class="order-items">
-            <div style="color:#999;font-size:13px;">共 ${order.item_count || '多'} 件商品</div>
+            <div style="color:#999;font-size:13px;">共 ${order.item_count || 0} 件商品</div>
           </div>
+          ${hasActiveAfterSale ? `
+          <div style="padding: 8px 0; border-top: 1px solid #f0f0f0; margin-top: 8px;">
+            <span class="badge badge-blue">
+              🔄 售后中 (${order.active_after_sale_count})
+            </span>
+            <span style="font-size: 12px; color: #999; margin-left: 8px;">
+              累计售后: ${order.total_after_sale_count || 0} 次
+            </span>
+            ${order.refunded_amount > 0 ? `
+              <span style="font-size: 12px; color: #ff4d4f; margin-left: 8px;">
+                已退款: ${formatMoney(order.refunded_amount || 0)}
+              </span>
+            ` : ''}
+          </div>
+          ` : ''}
           <div class="order-footer">
             <span>实付: <span class="order-amount">${formatMoney(order.pay_amount)}</span></span>
             <div class="order-actions">
-              ${canApply ? `<button onclick="goApply('${order.id}')" class="btn btn-sm btn-primary">申请售后</button>` : ''}
+              ${hasActiveAfterSale ? `
+                <button onclick="goAfterSaleList()" class="btn btn-sm btn-default">查看售后</button>
+              ` : ''}
+              ${canApply && !hasActiveAfterSale ? `
+                <button onclick="goApply('${order.id}')" class="btn btn-sm btn-primary">申请售后</button>
+              ` : ''}
             </div>
           </div>
         </div>
@@ -96,6 +118,10 @@
 
     function goApply(orderId) {
       window.location.href = `after-sale-apply.html?orderId=${orderId}`;
+    }
+
+    function goAfterSaleList() {
+      window.location.href = 'after-sale-list.html';
     }
 
     document.querySelectorAll('.nav-tab').forEach(tab => {

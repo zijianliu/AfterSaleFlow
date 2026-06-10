@@ -56,6 +56,13 @@ const api = {
       body: JSON.stringify({ username, password })
     });
   },
+
+  adminLogin(username, password) {
+    return request('/auth/admin-login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password })
+    });
+  },
   
   getMe() {
     return request('/auth/me');
